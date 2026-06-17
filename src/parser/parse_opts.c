@@ -31,6 +31,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	};
 	int		opt;
 	bool	scan_type_provided = false;
+	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
 	while ((opt = getopt_long(argc, argv, "hp:i:f:S:s:",
@@ -75,5 +76,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	}
 	if (!scan_type_provided)
 		memset(opts->scan, 1, sizeof(opts->scan));
+	if (!ports_provided)
+		ports[80] = true;
 	return (0);
 }
