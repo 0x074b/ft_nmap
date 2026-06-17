@@ -9,8 +9,6 @@
 # include <netinet/tcp.h>
 # include <netinet/udp.h>
 
-# include <pcap.h>
-
 # define MAX_PORTS			1024
 # define MAX_TARGETS		256
 # define MAX_DECOYS			16
@@ -53,6 +51,7 @@ typedef struct s_timing
 	uint32_t	retries;
 }	t_timing;
 
+//bonus
 typedef struct s_evasion
 {
 	bool		fragment;
@@ -62,12 +61,14 @@ typedef struct s_evasion
 	bool		decoy;
 }	t_evasion;
 
+//bonus
 typedef struct s_spoof
 {
 	bool			enabled;
 	struct in_addr	ip;
 }	t_spoof;
 
+//bonus
 typedef struct s_decoy
 {
 	struct in_addr	ip;
@@ -75,6 +76,7 @@ typedef struct s_decoy
 
 	/* service detection */
 
+//bonus
 typedef struct s_service
 {
 	uint16_t	port;
@@ -89,6 +91,7 @@ typedef struct s_service
 
 	/* OS fingerprint */
 
+//bonus
 typedef struct s_os_signature
 {
 	char		name[64];
@@ -111,6 +114,7 @@ typedef struct s_scan_result
 
 	t_port_state	state[SCAN_MAX];
 
+//bonus
 	t_service		service;
 }	t_scan_result;
 
@@ -124,6 +128,7 @@ typedef struct s_target
 
 	t_scan_result		results[MAX_PORTS];
 
+//bonus
 	t_os_signature		os;
 }	t_target;
 
@@ -158,27 +163,6 @@ typedef struct s_config
 
 	int				verbose;
 }	t_config;
-
-	/* network/ */
-int		pick_interface(char *iface, struct in_addr *src);
-
-	/* packet/ */
-size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-			uint16_t sport, uint16_t dport);
-
-	/* pcap/ */
-pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport);
-
-	/* scanner/ */
-int		syn_scan_port(int sock, pcap_t *p,
-			struct in_addr src, uint16_t sport,
-			struct in_addr dst, uint16_t dport,
-			uint32_t timeout_ms, t_port_state *state);
-
-	/* report/ */
-const char	*port_state_name(t_port_state s);
-void		report_port(const char *input, struct in_addr addr,
-				uint16_t port, t_port_state state);
 
 # include "parsing.h"
 
