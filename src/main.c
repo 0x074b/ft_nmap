@@ -38,7 +38,7 @@ static void	scan_targets(const t_options *opts, int sock, pcap_t *p,
 	printf("%-32s %-16s %5s  %s\n", "INPUT", "ADDR", "PORT", "STATE");
 	for (h = 0; h < opts->ip_count; h++)
 	{
-		for (port = 0; port <= MAX_PORTS; port++)
+		for (port = 1; port <= MAX_PORTS; port++)
 		{
 			if (!opts->ports[port])
 				continue ;
