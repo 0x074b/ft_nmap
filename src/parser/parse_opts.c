@@ -45,6 +45,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		case OPT_PORTS:
 			if (set_ports(opts, optarg) < 0)
 				return (-1);
+			ports_provided = true;
 			break ;
 		case OPT_IP:
 			if (set_ip(opts, optarg) < 0)
