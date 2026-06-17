@@ -157,4 +157,6 @@ typedef struct s_config
 	int				verbose;
 }	t_config;
 
+# include "parsing.h"
+
 #endif
