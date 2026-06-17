@@ -65,7 +65,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 			return (-1);
 		}
 	}
-	if (!opts->ip && !opts->file)
+	if (opts->ip_count == 0)
 	{
 		fprintf(stderr, "Error: --ip or --file is required\n");
 		print_help(argv[0]);

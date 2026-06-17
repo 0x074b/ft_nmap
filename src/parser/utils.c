@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,10 +64,11 @@ int	set_ports(t_options *opts, const char *arg)
 }
 
 /*
-** Resolve an IPv4 address or FQDN to its dotted-quad form. Uses getaddrinfo()
-** so the same code accepts "10.0.2.15" and "www.google.com".
+** Resolve an IPv4 address or FQDN into a network-order struct in_addr ready
+** for raw-socket and sockaddr_in use. Accepts both "10.0.2.15" and
+** "www.google.com" via getaddrinfo().
 */
-int	resolve_host(const char *host, char *out, size_t out_len)
+int	resolve_host(const char *host, struct in_addr *out)
 {
 	struct addrinfo		hints;
 	struct addrinfo		*res;
@@ -81,43 +83,85 @@ int	resolve_host(const char *host, char *out, size_t out_len)
 		return (fprintf(stderr, "Error: cannot resolve '%s': %s\n",
 				host, gai_strerror(err)), -1);
 	addr = (struct sockaddr_in *)res->ai_addr;
-	if (inet_ntop(AF_INET, &addr->sin_addr, out, out_len) == NULL)
-	{
-		freeaddrinfo(res);
-		return (fprintf(stderr, "Error: inet_ntop: %s\n", strerror(errno)), -1);
-	}
+	*out = addr->sin_addr;
 	freeaddrinfo(res);
+	return (0);
+}
+
+/*
+** Append a single host to opts->ips. Resolves it up front so failures
+** abort parsing early, and grows the ips array geometrically up to
+** MAX_TARGETS.
+*/
+int	add_host(t_options *opts, const char *host)
+{
+	struct in_addr	addr;
+	t_host			*tmp;
+	size_t			new_cap;
+
+	if (opts->ip_count >= MAX_TARGETS)
+		return (fprintf(stderr,
+				"Error: too many hosts (max %d)\n", MAX_TARGETS), -1);
+	if (strlen(host) >= HOST_LEN)
+		return (fprintf(stderr, "Error: host too long: %s\n", host), -1);
+	if (resolve_host(host, &addr) < 0)
+		return (-1);
+	if (opts->ip_count >= opts->ip_cap)
+	{
+		new_cap = opts->ip_cap ? opts->ip_cap * 2 : 8;
+		if (new_cap > MAX_TARGETS)
+			new_cap = MAX_TARGETS;
+		tmp = realloc(opts->ips, new_cap * sizeof(*tmp));
+		if (!tmp)
+			return (fprintf(stderr,
+					"Error: realloc: %s\n", strerror(errno)), -1);
+		opts->ips = tmp;
+		opts->ip_cap = new_cap;
+	}
+	memset(&opts->ips[opts->ip_count], 0, sizeof(t_host));
+	strncpy(opts->ips[opts->ip_count].input, host, HOST_LEN - 1);
+	opts->ips[opts->ip_count].addr = addr;
+	opts->ip_count++;
 	return (0);
 }
 
 int	set_ip(t_options *opts, const char *arg)
 {
-	char	resolved[INET_ADDRSTRLEN];
-
-	if (strlen(arg) >= HOST_LEN)
-		return (fprintf(stderr, "Error: host too long: %s\n", arg), -1);
-	if (resolve_host(arg, resolved, sizeof(resolved)) < 0)
-		return (-1);
-	free(opts->ip);
-	opts->ip = strdup(arg);
-	if (!opts->ip)
-		return (fprintf(stderr, "Error: strdup: %s\n", strerror(errno)), -1);
-	return (0);
+	return (add_host(opts, arg));
 }
 
+/*
+** Read a hosts file, one host per line. Blank lines and lines starting with
+** '#' are skipped. Each host is resolved and appended to opts->ips.
+*/
 int	set_file(t_options *opts, const char *arg)
 {
 	FILE	*f;
+	char	line[HOST_LEN];
+	char	*start;
+	size_t	len;
 
 	f = fopen(arg, "r");
 	if (!f)
 		return (fprintf(stderr, "Error: cannot open '%s': %s\n",
 				arg, strerror(errno)), -1);
+	while (fgets(line, sizeof(line), f))
+	{
+		len = strlen(line);
+		while (len > 0 && isspace((unsigned char)line[len - 1]))
+			line[--len] = '\0';
+		start = line;
+		while (*start && isspace((unsigned char)*start))
+			start++;
+		if (*start == '\0' || *start == '#')
+			continue ;
+		if (add_host(opts, start) < 0)
+		{
+			fclose(f);
+			return (-1);
+		}
+	}
 	fclose(f);
-	free(opts->file);
-	opts->file = strdup(arg);
-	if (!opts->file)
-		return (fprintf(stderr, "Error: strdup: %s\n", strerror(errno)), -1);
 	return (0);
 }
 
