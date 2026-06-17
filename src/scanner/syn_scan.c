@@ -107,7 +107,9 @@ int	syn_scan_port(int sock, pcap_t *p,
 				return (0);
 			}
 		}
-		else if (rc < 0)
+		else if (rc == 0)
+			usleep(1000);
+		else
 			break ;
 	}
 	return (0);

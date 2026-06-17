@@ -33,5 +33,11 @@ pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport)
 		return (NULL);
 	}
 	pcap_freecode(&fp);
+	if (pcap_setnonblock(p, 1, errbuf) < 0)
+	{
+		fprintf(stderr, "Error: pcap_setnonblock: %s\n", errbuf);
+		pcap_close(p);
+		return (NULL);
+	}
 	return (p);
 }
