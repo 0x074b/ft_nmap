@@ -75,8 +75,8 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		return (-1);
 	}
 	if (!scan_type_provided)
-		memset(opts->scan, 1, sizeof(opts->scan));
+		memset(opts->scan, true, sizeof(opts->scan));
 	if (!ports_provided)
-		opts->ports[80] = true;
+		memset(opts->ports, true, sizeof(opts->ports));
 	return (0);
 }
