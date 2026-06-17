@@ -29,7 +29,8 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		{"scan",	required_argument,	0, OPT_SCAN},
 		{0, 0, 0, 0},
 	};
-	int	opt;
+	int		opt;
+	bool	scan_type_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
 	while ((opt = getopt_long(argc, argv, "hp:i:f:S:s:",
@@ -59,6 +60,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		case OPT_SCAN:
 			if (set_scan(opts, optarg) < 0)
 				return (-1);
+			scan_type_provided = true;
 			break ;
 		default:
 			print_help(argv[0]);
@@ -71,5 +73,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		print_help(argv[0]);
 		return (-1);
 	}
+	if (!scan_type_provided)
+		memset(opts->scan, 1, sizeof(opts->scan));
 	return (0);
 }
