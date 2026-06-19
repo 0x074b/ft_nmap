@@ -178,7 +178,7 @@ int		syn_scan_port(int sock, pcap_t *p,
 	/* report/ */
 const char	*port_state_name(t_port_state s);
 void		report_port(const char *input, struct in_addr addr,
-				uint16_t port, t_port_state state);
+				uint16_t port, t_port_state state, uint16_t sport);
 
 # include "parsing.h"
 
