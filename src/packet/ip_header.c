@@ -35,12 +35,10 @@ struct s_pseudo
 	uint16_t	len;
 };
 
-/*
-** Build an IPv4 + TCP SYN probe into buf. Returns the total length.
-** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
-*/
-size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-		uint16_t sport, uint16_t dport, uint8_t flags)
+static size_t	build_tcp_packet(uint8_t *buf,
+		struct in_addr src, struct in_addr dst,
+		uint16_t sport, uint16_t dport,
+		bool set_syn, bool set_ack)
 {
 	struct iphdr	*iph;
 	struct tcphdr	*tcph;
@@ -65,12 +63,8 @@ size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 	tcph->dest = htons(dport);
 	tcph->seq = htonl((uint32_t)rand());
 	tcph->doff = 5;
-	tcph->fin = ((flags & TCP_FLAG_FIN) != 0);
-	tcph->syn = ((flags & TCP_FLAG_SYN) != 0);
-	tcph->rst = ((flags & TCP_FLAG_RST) != 0);
-	tcph->psh = ((flags & TCP_FLAG_PSH) != 0);
-	tcph->ack = ((flags & TCP_FLAG_ACK) != 0);
-	tcph->urg = ((flags & TCP_FLAG_URG) != 0);
+	tcph->syn = set_syn ? 1 : 0;
+	tcph->ack = set_ack ? 1 : 0;
 	tcph->window = htons(1024);
 	ph.saddr = src.s_addr;
 	ph.daddr = dst.s_addr;
@@ -83,44 +77,22 @@ size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 	return (total);
 }
 
+/*
+** Build an IPv4 + TCP SYN probe into buf. Returns the total length.
+** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
+*/
 size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 		uint16_t sport, uint16_t dport)
 {
-	return (build_tcp_packet(buf, src, dst, sport, dport, TCP_FLAG_SYN));
+	return (build_tcp_packet(buf, src, dst, sport, dport, true, false));
 }
 
-size_t	build_udp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+/*
+** Build an IPv4 + TCP ACK probe into buf. Returns the total length.
+** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
+*/
+size_t	build_ack_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 		uint16_t sport, uint16_t dport)
 {
-	struct iphdr	*iph;
-	struct udphdr	*udph;
-	struct s_pseudo	ph;
-	uint8_t			pseudo[sizeof(struct s_pseudo) + sizeof(struct udphdr)];
-	size_t			total;
-
-	total = sizeof(*iph) + sizeof(*udph);
-	memset(buf, 0, total);
-	iph = (struct iphdr *)buf;
-	udph = (struct udphdr *)(buf + sizeof(*iph));
-	iph->ihl = 5;
-	iph->version = 4;
-	iph->tot_len = htons(total);
-	iph->id = htons((uint16_t)(rand() & 0xffff));
-	iph->ttl = 64;
-	iph->protocol = IPPROTO_UDP;
-	iph->saddr = src.s_addr;
-	iph->daddr = dst.s_addr;
-	iph->check = in_cksum(iph, sizeof(*iph));
-	udph->source = htons(sport);
-	udph->dest = htons(dport);
-	udph->len = htons(sizeof(*udph));
-	ph.saddr = src.s_addr;
-	ph.daddr = dst.s_addr;
-	ph.zero = 0;
-	ph.protocol = IPPROTO_UDP;
-	ph.len = htons(sizeof(*udph));
-	memcpy(pseudo, &ph, sizeof(ph));
-	memcpy(pseudo + sizeof(ph), udph, sizeof(*udph));
-	udph->check = in_cksum(pseudo, sizeof(pseudo));
-	return (total);
+	return (build_tcp_packet(buf, src, dst, sport, dport, false, true));
 }
