@@ -6,6 +6,7 @@
 
 # include <arpa/inet.h>
 # include <netinet/ip.h>
+# include <netinet/ip_icmp.h>
 # include <netinet/tcp.h>
 # include <netinet/udp.h>
 
@@ -21,6 +22,13 @@
 # define SERVICE_LEN		64
 # define VERSION_LEN		64
 # define BANNER_LEN			256
+
+# define TCP_FLAG_FIN			0x01
+# define TCP_FLAG_SYN			0x02
+# define TCP_FLAG_RST			0x04
+# define TCP_FLAG_PSH			0x08
+# define TCP_FLAG_ACK			0x10
+# define TCP_FLAG_URG			0x20
 
 	/* enum */
 
@@ -165,6 +173,10 @@ int		pick_interface(char *iface, struct in_addr *src);
 	/* packet/ */
 size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 			uint16_t sport, uint16_t dport);
+size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+			uint16_t sport, uint16_t dport, uint8_t flags);
+size_t	build_udp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+			uint16_t sport, uint16_t dport);
 
 	/* pcap/ */
 pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport);
@@ -174,11 +186,37 @@ int		syn_scan_port(int sock, pcap_t *p,
 			struct in_addr src, uint16_t sport,
 			struct in_addr dst, uint16_t dport,
 			uint32_t timeout_ms, t_port_state *state);
+int		ack_scan_port(int sock, pcap_t *p,
+			struct in_addr src, uint16_t sport,
+			struct in_addr dst, uint16_t dport,
+			uint32_t timeout_ms, t_port_state *state);
+int		fin_scan_port(int sock, pcap_t *p,
+			struct in_addr src, uint16_t sport,
+			struct in_addr dst, uint16_t dport,
+			uint32_t timeout_ms, t_port_state *state);
+int		null_scan_port(int sock, pcap_t *p,
+			struct in_addr src, uint16_t sport,
+			struct in_addr dst, uint16_t dport,
+			uint32_t timeout_ms, t_port_state *state);
+int		xmas_scan_port(int sock, pcap_t *p,
+			struct in_addr src, uint16_t sport,
+			struct in_addr dst, uint16_t dport,
+			uint32_t timeout_ms, t_port_state *state);
+int		udp_scan_port(int sock, pcap_t *p,
+			struct in_addr src, uint16_t sport,
+			struct in_addr dst, uint16_t dport,
+			uint32_t timeout_ms, t_port_state *state);
+int		scan_port(t_scan_type type, int sock, pcap_t *p,
+			struct in_addr src, uint16_t sport,
+			struct in_addr dst, uint16_t dport,
+			uint32_t timeout_ms, t_port_state *state);
 
 	/* report/ */
 const char	*port_state_name(t_port_state s);
+const char	*scan_type_name(t_scan_type t);
 void		report_port(const char *input, struct in_addr addr,
-				uint16_t port, t_port_state state, uint16_t sport);
+				t_scan_type type, uint16_t port,
+				t_port_state state, uint16_t sport);
 
 # include "parsing.h"
 

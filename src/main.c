@@ -12,7 +12,7 @@ static int	open_raw_socket(void)
 	int	sock;
 	int	on;
 
-	sock = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+	sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
 	if (sock < 0)
 	{
 		perror("socket");
@@ -32,22 +32,34 @@ static void	scan_targets(const t_options *opts, int sock, pcap_t *p,
 		struct in_addr src, uint16_t sport)
 {
 	t_port_state	state;
+	t_scan_type	scan;
 	size_t			h;
 	int				port;
 
-	printf("%-32s %-16s %5s  %s\n", "INPUT", "ADDR", "PORT", "STATE");
+	printf("%-8s %-32s %-16s %5s  %s\n",
+		"SCAN", "INPUT", "ADDR", "PORT", "STATE");
 	for (h = 0; h < opts->ip_count; h++)
 	{
-		for (port = 1; port <= MAX_PORTS; port++)
+		scan = SCAN_SYN;
+		while (scan < SCAN_MAX)
 		{
-			if (!opts->ports[port])
-				continue ;
-			if (syn_scan_port(sock, p, src, sport, opts->ips[h].addr,
-					(uint16_t)port, 1000, &state) == 0)
+			if (!opts->scan[scan])
 			{
-				report_port(opts->ips[h].input, opts->ips[h].addr,
-					(uint16_t)port, state, sport);
+				scan++;
+				continue ;
 			}
+			for (port = 1; port <= MAX_PORTS; port++)
+			{
+				if (!opts->ports[port])
+					continue ;
+				if (scan_port(scan, sock, p, src, sport, opts->ips[h].addr,
+						(uint16_t)port, 1000, &state) == 0)
+				{
+					report_port(opts->ips[h].input, opts->ips[h].addr,
+						scan, (uint16_t)port, state, sport);
+				}
+			}
+			scan++;
 		}
 	}
 }
