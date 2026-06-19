@@ -144,7 +144,7 @@ int	main(int argc, char **argv)
 			return (free_results(results, opts.ip_count),
 				close(sock), 1);
 	}
-	report_results(&opts, results);
+	report_results(&opts, scan_type, results);
 	free_results(results, opts.ip_count);
 	close(sock);
 	return (0);

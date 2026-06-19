@@ -209,6 +209,7 @@ typedef struct s_worker
 int		run_scan_threaded(const t_options *opts, int sock,
 			t_scan_type scan_type, const char *iface, struct in_addr src,
 			t_port_state **results);
-void	report_results(const t_options *opts, t_port_state **results);
+void	report_results(const t_options *opts, t_scan_type scan_type,
+			t_port_state **results);
 
 #endif
