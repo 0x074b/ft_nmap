@@ -23,6 +23,7 @@ void	report_port(const char *input, struct in_addr addr, uint16_t port,
 	char	buf[INET_ADDRSTRLEN];
 
 	inet_ntop(AF_INET, &addr, buf, sizeof(buf));
+	if (port_state_name(state) != PORT_CLOSED)
 	printf("%-32s %-16s %5u  %s\n", input, buf, port, port_state_name(state));
 }
 
