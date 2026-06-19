@@ -13,8 +13,9 @@ void	print_help(const char *prog)
 		" \"22,80,443\"\n");
 	printf("  --ip ADDRESS      Target IPv4 address or FQDN\n");
 	printf("  --file PATH       File containing a list of hosts\n");
-	printf("  --speedup N       Number of parallel threads (0-%d)\n",
-		MAX_SPEEDUP);
+	printf("  --speedup[=N]     Number of parallel threads (0-%d,"
+		" default %d if flag passed alone)\n",
+		MAX_SPEEDUP, MAX_SPEEDUP);
 	printf("  --scan TYPES      Scan types: SYN,ACK,FIN,NULL,XMAS,UDP\n");
 }
 
@@ -25,7 +26,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		{"ports",	required_argument,	0, OPT_PORTS},
 		{"ip",		required_argument,	0, OPT_IP},
 		{"file",	required_argument,	0, OPT_FILE},
-		{"speedup",	required_argument,	0, OPT_SPEEDUP},
+		{"speedup",	optional_argument,	0, OPT_SPEEDUP},
 		{"scan",	required_argument,	0, OPT_SCAN},
 		{0, 0, 0, 0},
 	};
@@ -34,7 +35,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
-	while ((opt = getopt_long(argc, argv, "hp:i:f:S:s:",
+	while ((opt = getopt_long(argc, argv, "hp:i:f:S::s:",
 				longopts, NULL)) != -1)
 	{
 		switch (opt)
@@ -56,7 +57,9 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 				return (-1);
 			break ;
 		case OPT_SPEEDUP:
-			if (set_speedup(opts, optarg) < 0)
+			if (!optarg)
+				opts->speedup = MAX_SPEEDUP;
+			else if (set_speedup(opts, optarg) < 0)
 				return (-1);
 			break ;
 		case OPT_SCAN:
