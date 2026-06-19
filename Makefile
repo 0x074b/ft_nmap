@@ -2,7 +2,7 @@ NAME		:= ft_nmap
 PARSING		:= parsing
 
 CC			:= gcc
-CFLAGS		:= -Wall -Wextra -Werror
+CFLAGS		:= -Wall -Wextra -Werror -g
 INCLUDES	:= -I includes
 LDLIBS		:= -lpcap -lpthread
 
