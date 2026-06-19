@@ -46,8 +46,7 @@ static void	scan_targets(const t_options *opts, int sock, pcap_t *p,
 					(uint16_t)port, 1000, &state) == 0)
 			{
 				report_port(opts->ips[h].input, opts->ips[h].addr,
-					(uint16_t)port, state);
-				printf("	source port used : %u", sport);
+					(uint16_t)port, state, sport);
 			}
 		}
 	}
