@@ -13,28 +13,10 @@
 */
 static void	*worker_main(void *arg)
 {
-	t_worker		*w = arg;
-	t_port_state	state;
-	int				port;
-	size_t			h;
+	t_worker	*w = arg;
 
-	port = w->id + 1;
-	while (port <= MAX_PORTS)
-	{
-		if (w->opts->ports[port])
-		{
-			for (h = 0; h < w->opts->ip_count; h++)
-			{
-				if (syn_scan_port(w->sock, w->p, w->src, w->sport,
-						w->opts->ips[h].addr, (uint16_t)port,
-						1000, &state) == 0)
-					w->results[h][port] = state;
-				else
-					w->results[h][port] = PORT_FILTERED;
-			}
-		}
-		port += w->nthreads;
-	}
+	syn_scan_stride(w->sock, w->p, w->src, w->sport, w->opts,
+		w->id, w->nthreads, w->results);
 	return (NULL);
 }
 

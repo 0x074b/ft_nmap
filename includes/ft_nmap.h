@@ -170,10 +170,15 @@ size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport);
 
 	/* scanner/ */
-int		syn_scan_port(int sock, pcap_t *p,
-			struct in_addr src, uint16_t sport,
-			struct in_addr dst, uint16_t dport,
-			uint32_t timeout_ms, t_port_state *state);
+int		syn_send_probe(int sock, struct in_addr src, uint16_t sport,
+			struct in_addr dst, uint16_t dport);
+void	syn_collect_replies(pcap_t *p, uint32_t timeout_ms,
+			const struct s_options *opts, uint16_t sport,
+			t_port_state **results);
+void	syn_scan_stride(int sock, pcap_t *p, struct in_addr src,
+			uint16_t sport, const struct s_options *opts,
+			int stride_id, int stride_total,
+			t_port_state **results);
 
 	/* report/ */
 const char	*port_state_name(t_port_state s);

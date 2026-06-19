@@ -28,28 +28,6 @@ static int	open_raw_socket(void)
 	return (sock);
 }
 
-static void	scan_targets(const t_options *opts, int sock, pcap_t *p,
-		struct in_addr src, uint16_t sport, t_port_state **results)
-{
-	t_port_state	state;
-	size_t			h;
-	int				port;
-
-	for (h = 0; h < opts->ip_count; h++)
-	{
-		for (port = 1; port <= MAX_PORTS; port++)
-		{
-			if (!opts->ports[port])
-				continue ;
-			if (syn_scan_port(sock, p, src, sport, opts->ips[h].addr,
-					(uint16_t)port, 1000, &state) == 0)
-				results[h][port] = state;
-			else
-				results[h][port] = PORT_FILTERED;
-		}
-	}
-}
-
 static t_port_state	**alloc_results(size_t ip_count)
 {
 	t_port_state	**r;
@@ -113,7 +91,7 @@ int	main(int argc, char **argv)
 		if (!p)
 			return (free_results(results, opts.ip_count),
 				close(sock), 1);
-		scan_targets(&opts, sock, p, src, sport, results);
+		syn_scan_stride(sock, p, src, sport, &opts, 0, 1, results);
 		pcap_close(p);
 	}
 	else
