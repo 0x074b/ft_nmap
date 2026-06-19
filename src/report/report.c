@@ -78,7 +78,7 @@ static void	print_host_heading(const t_options *opts, size_t host_index)
 static t_port_state	detail_state_for_scan(t_scan_type scan_type)
 {
 	if (scan_type == SCAN_ACK)
-		return (PORT_UNFILTERED);
+		return (PORT_FILTERED);
 	return (PORT_OPEN);
 }
 
@@ -127,8 +127,16 @@ static void	report_host_syn_ack(const t_options *opts, size_t host_index,
 	detail_state = detail_state_for_scan(scan_type);
 	if (detail_state == PORT_OPEN)
 		detailed_count = counts.open;
+	else if (detail_state == PORT_FILTERED)
+		detailed_count = counts.filtered;
 	else
 		detailed_count = counts.unfiltered;
+	if (detailed_count == counts.total)
+	{
+		print_summary_line(opts->ips[host_index].addr, counts.total,
+			port_state_name(detail_state));
+		return ;
+	}
 	if (detailed_count == 0)
 	{
 		if (counts.filtered == counts.total)
@@ -149,10 +157,12 @@ static void	report_host_syn_ack(const t_options *opts, size_t host_index,
 		}
 		return ;
 	}
-	if (counts.filtered > 0)
+	if (detail_state != PORT_FILTERED && counts.filtered > 0)
 		print_not_shown_line(counts.filtered, "filtered");
-	if (counts.closed > 0)
+	if (detail_state != PORT_CLOSED && counts.closed > 0)
 		print_not_shown_line(counts.closed, "closed");
+	if (detail_state != PORT_UNFILTERED && counts.unfiltered > 0)
+		print_not_shown_line(counts.unfiltered, "unfiltered");
 	print_host_details(opts, host_index, host_results, detail_state);
 }
 

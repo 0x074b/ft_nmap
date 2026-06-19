@@ -106,6 +106,9 @@ int	main(int argc, char **argv)
 	pcap_t			*p;
 	t_port_state	**results;
 	t_scan_type		scan_type;
+	struct timespec	start_ts;
+	struct timespec	end_ts;
+	double			elapsed_s;
 
 	if (parse_opts(argc, argv, &opts) < 0)
 		return (1);
@@ -128,6 +131,7 @@ int	main(int argc, char **argv)
 	if (!results)
 		return (close(sock), 1);
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
+	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (opts.speedup == 0)
 	{
 		sport = (uint16_t)(49152 + (rand() % 16000));
@@ -144,7 +148,11 @@ int	main(int argc, char **argv)
 			return (free_results(results, opts.ip_count),
 				close(sock), 1);
 	}
+	clock_gettime(CLOCK_MONOTONIC, &end_ts);
 	report_results(&opts, scan_type, results);
+	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
+		+ (double)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000000.0;
+	printf("Scan completed in %.2f seconds\n", elapsed_s);
 	free_results(results, opts.ip_count);
 	close(sock);
 	return (0);
