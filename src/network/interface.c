@@ -6,8 +6,12 @@
 #include "ft_nmap.h"
 
 /*
-** Pick the first up, non-loopback IPv4 interface and report its name and
-** source address. Output buffers must hold IFACE_LEN and a struct in_addr.
+** Discover a usable IPv4 source address from any up, non-loopback
+** interface. The pcap handle itself listens on the "any" pseudo-interface
+** so loopback traffic (e.g. scans against 127.0.0.1 or our own LAN IP)
+** is captured too — it would otherwise miss reply packets that never
+** traverse a physical NIC. Output buffers must hold IFACE_LEN and a
+** struct in_addr.
 */
 int	pick_interface(char *iface, struct in_addr *src)
 {
@@ -27,7 +31,7 @@ int	pick_interface(char *iface, struct in_addr *src)
 		if (!(ifa->ifa_flags & IFF_UP) || (ifa->ifa_flags & IFF_LOOPBACK))
 			continue ;
 		sa = (struct sockaddr_in *)ifa->ifa_addr;
-		strncpy(iface, ifa->ifa_name, IFACE_LEN - 1);
+		strncpy(iface, "any", IFACE_LEN - 1);
 		iface[IFACE_LEN - 1] = '\0';
 		*src = sa->sin_addr;
 		freeifaddrs(ifap);

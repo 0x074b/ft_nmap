@@ -182,4 +182,22 @@ void		report_port(const char *input, struct in_addr addr,
 
 # include "parsing.h"
 
+	/* thread/ — declared after parsing.h because t_options lives there */
+typedef struct s_worker
+{
+	int					id;
+	int					nthreads;
+	int					sock;
+	pcap_t				*p;
+	struct in_addr		src;
+	uint16_t			sport;
+	const t_options		*opts;
+	t_port_state		**results;
+}	t_worker;
+
+int		run_scan_threaded(const t_options *opts, int sock,
+			const char *iface, struct in_addr src,
+			t_port_state **results);
+void	report_results(const t_options *opts, t_port_state **results);
+
 #endif
