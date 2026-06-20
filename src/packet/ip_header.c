@@ -35,12 +35,10 @@ struct s_pseudo
 	uint16_t	len;
 };
 
-/*
-** Build an IPv4 + TCP SYN probe into buf. Returns the total length.
-** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
-*/
-size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-		uint16_t sport, uint16_t dport)
+static size_t	build_tcp_packet(uint8_t *buf,
+		struct in_addr src, struct in_addr dst,
+		uint16_t sport, uint16_t dport,
+		bool set_syn, bool set_ack)
 {
 	struct iphdr	*iph;
 	struct tcphdr	*tcph;
@@ -65,7 +63,8 @@ size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 	tcph->dest = htons(dport);
 	tcph->seq = htonl((uint32_t)rand());
 	tcph->doff = 5;
-	tcph->syn = 1;
+	tcph->syn = set_syn ? 1 : 0;
+	tcph->ack = set_ack ? 1 : 0;
 	tcph->window = htons(1024);
 	ph.saddr = src.s_addr;
 	ph.daddr = dst.s_addr;
@@ -76,4 +75,24 @@ size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 	memcpy(pseudo + sizeof(ph), tcph, sizeof(*tcph));
 	tcph->check = in_cksum(pseudo, sizeof(pseudo));
 	return (total);
+}
+
+/*
+** Build an IPv4 + TCP SYN probe into buf. Returns the total length.
+** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
+*/
+size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+		uint16_t sport, uint16_t dport)
+{
+	return (build_tcp_packet(buf, src, dst, sport, dport, true, false));
+}
+
+/*
+** Build an IPv4 + TCP ACK probe into buf. Returns the total length.
+** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
+*/
+size_t	build_ack_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+		uint16_t sport, uint16_t dport)
+{
+	return (build_tcp_packet(buf, src, dst, sport, dport, false, true));
 }

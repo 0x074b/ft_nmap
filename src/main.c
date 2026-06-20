@@ -7,6 +7,20 @@
 
 #include "ft_nmap.h"
 
+static t_scan_type	selected_scan_type(const t_options *opts)
+{
+	int	i;
+
+	i = 0;
+	while (i < SCAN_MAX)
+	{
+		if (opts->scan[i])
+			return ((t_scan_type)i);
+		i++;
+	}
+	return (SCAN_MAX);
+}
+
 static int	open_raw_socket(void)
 {
 	int	sock;
@@ -68,9 +82,19 @@ int	main(int argc, char **argv)
 	int				sock;
 	pcap_t			*p;
 	t_port_state	**results;
+	t_scan_type		scan_type;
+	struct timespec	start_ts;
+	struct timespec	end_ts;
+	double			elapsed_s;
 
 	if (parse_opts(argc, argv, &opts) < 0)
 		return (1);
+	scan_type = selected_scan_type(&opts);
+	if (scan_type == SCAN_MAX)
+		return (fprintf(stderr, "Error: no scan type selected\n"), 1);
+	if (scan_type != SCAN_SYN && scan_type != SCAN_ACK)
+		return (fprintf(stderr,
+				"Error: selected scan type is not implemented yet\n"), 1);
 	if (pick_interface(iface, &src) < 0)
 		return (1);
 	srand((unsigned int)time(NULL));
@@ -84,6 +108,7 @@ int	main(int argc, char **argv)
 	if (!results)
 		return (close(sock), 1);
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
+	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (opts.speedup == 0)
 	{
 		sport = (uint16_t)(49152 + (rand() % 16000));
@@ -91,16 +116,20 @@ int	main(int argc, char **argv)
 		if (!p)
 			return (free_results(results, opts.ip_count),
 				close(sock), 1);
-		syn_scan_stride(sock, p, src, sport, &opts, 0, 1, results);
+		syn_scan_stride(sock, p, src, sport, &opts, scan_type, 0, 1, results);
 		pcap_close(p);
 	}
 	else
 	{
-		if (run_scan_threaded(&opts, sock, iface, src, results) < 0)
+		if (run_scan_threaded(&opts, sock, scan_type, iface, src, results) < 0)
 			return (free_results(results, opts.ip_count),
 				close(sock), 1);
 	}
-	report_results(&opts, results);
+	clock_gettime(CLOCK_MONOTONIC, &end_ts);
+	report_results(&opts, scan_type, results);
+	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
+		+ (double)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000000.0;
+	printf("Scan completed in %.2f seconds\n", elapsed_s);
 	free_results(results, opts.ip_count);
 	close(sock);
 	return (0);
