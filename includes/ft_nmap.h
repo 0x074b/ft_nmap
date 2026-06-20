@@ -103,7 +103,9 @@ typedef struct s_os_signature
 	float		confidence;
 }	t_os_signature;
 
-	/* scan result */
+	/* scan result — one entry per probed port, holding the outcome of every
+	** scan type run against it. state[] is indexed by t_scan_type, so a single
+	** port can carry a SYN verdict, an ACK verdict, etc. side by side. */
 
 typedef struct s_scan_result
 {
@@ -171,15 +173,9 @@ size_t	build_ack_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 	/* pcap/ */
 pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport);
 
-	/* scanner/ — syn_send_probe needs no parsing types, declare here.
-	** Handles SYN and ACK probes; the scan type selects the packet builder. */
-int		syn_send_probe(int sock, t_scan_type type, struct in_addr src,
-			uint16_t sport, struct in_addr dst, uint16_t dport);
-
 	/* report/ */
 const char	*port_state_name(t_port_state s);
-void		report_port(const char *input, struct in_addr addr,
-				uint16_t port, t_port_state state);
+const char	*scan_type_name(t_scan_type type);
 
 # include "parsing.h"
 
@@ -194,22 +190,23 @@ typedef struct s_worker
 	uint16_t			sport;
 	t_scan_type			scan_type;
 	const t_options		*opts;
-	t_port_state		**results;
+	t_scan_result		**results;
 }	t_worker;
 
-	/* scanner/ — declared after parsing.h because t_options lives there */
-void	syn_collect_replies(pcap_t *p, uint32_t timeout_ms,
+	/* scanner/ — generic, scan-type-driven; declared after parsing.h because
+	** t_options lives there. The concrete per-type probe builders and reply
+	** classifiers live behind scan_ops() in scanner_internal.h. */
+void	scan_collect_replies(pcap_t *p, uint32_t timeout_ms,
 			const t_options *opts, uint16_t sport, t_scan_type type,
-			t_port_state **results);
-void	syn_scan_stride(int sock, pcap_t *p, struct in_addr src,
+			t_scan_result **results);
+void	scan_stride(int sock, pcap_t *p, struct in_addr src,
 			uint16_t sport, const t_options *opts, t_scan_type type,
 			int stride_id, int stride_total,
-			t_port_state **results);
+			t_scan_result **results);
 
 int		run_scan_threaded(const t_options *opts, int sock,
 			t_scan_type scan_type, const char *iface, struct in_addr src,
-			t_port_state **results);
-void	report_results(const t_options *opts, t_scan_type scan_type,
-			t_port_state **results);
+			t_scan_result **results);
+void	report_results(const t_options *opts, t_scan_result **results);
 
 #endif

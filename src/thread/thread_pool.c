@@ -15,7 +15,7 @@ static void	*worker_main(void *arg)
 {
 	t_worker	*w = arg;
 
-	syn_scan_stride(w->sock, w->p, w->src, w->sport, w->opts,
+	scan_stride(w->sock, w->p, w->src, w->sport, w->opts,
 		w->scan_type, w->id, w->nthreads, w->results);
 	return (NULL);
 }
@@ -70,7 +70,7 @@ static int	open_worker_handles(t_worker *workers, int n, const char *iface)
 
 int	run_scan_threaded(const t_options *opts, int sock,
 		t_scan_type scan_type, const char *iface, struct in_addr src,
-		t_port_state **results)
+		t_scan_result **results)
 {
 	t_worker	*workers;
 	pthread_t	*tids;
