@@ -68,20 +68,12 @@ static int	open_worker_handles(t_worker *workers, int n, const char *iface)
 	return (0);
 }
 
-int	run_scan_threaded(const t_options *opts, int sock,
-		t_scan_type scan_type, const char *iface, struct in_addr src,
-		t_scan_result **results, t_pcap_stats *stats)
+static void	init_workers(t_worker *workers, int n, int sock,
+		const t_options *opts, t_scan_type scan_type, struct in_addr src,
+		t_scan_result **results)
 {
-	t_worker	*workers;
-	pthread_t	*tids;
-	int			n;
-	int			i;
+	int	i;
 
-	n = opts->speedup;
-	workers = calloc(n, sizeof(*workers));
-	tids = calloc(n, sizeof(*tids));
-	if (!workers || !tids)
-		return (free(workers), free(tids), -1);
 	for (i = 0; i < n; i++)
 	{
 		workers[i].id = i;
@@ -92,18 +84,41 @@ int	run_scan_threaded(const t_options *opts, int sock,
 		workers[i].opts = opts;
 		workers[i].results = results;
 	}
+}
+
+/*
+** Run one scan pass with n = speedup + 1 strides. The extra speedup workers
+** (ids 1..n-1) run on their own threads; worker 0 runs on the main thread
+** itself, after the threads are launched. This means speedup 0 collapses to
+** a single stride executed inline — no separate sequential path. Stats are
+** summed and handles closed once every worker has finished.
+*/
+int	run_scan_threaded(const t_options *opts, int sock,
+		t_scan_type scan_type, const char *iface, struct in_addr src,
+		t_scan_result **results, t_pcap_stats *stats)
+{
+	t_worker	*workers;
+	pthread_t	*tids;
+	int			n;
+	int			i;
+
+	n = opts->speedup + 1;
+	workers = calloc(n, sizeof(*workers));
+	tids = calloc(n, sizeof(*tids));
+	if (!workers || !tids)
+		return (free(workers), free(tids), -1);
+	init_workers(workers, n, sock, opts, scan_type, src, results);
 	if (open_worker_handles(workers, n, iface) < 0)
 		return (free(workers), free(tids), -1);
-	for (i = 0; i < n; i++)
+	for (i = 1; i < n; i++)
 		pthread_create(&tids[i], NULL, worker_main, &workers[i]);
-	for (i = 0; i < n; i++)
+	worker_main(&workers[0]);
+	for (i = 1; i < n; i++)
 		pthread_join(tids[i], NULL);
 	for (i = 0; i < n; i++)
 	{
 		accumulate_pcap_stats(workers[i].p, stats);
 		pcap_close(workers[i].p);
 	}
-	free(workers);
-	free(tids);
-	return (0);
+	return (free(workers), free(tids), 0);
 }
