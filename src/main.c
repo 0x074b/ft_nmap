@@ -62,29 +62,6 @@ static void	free_results(t_scan_result **r, size_t ip_count)
 	free(r);
 }
 
-/*
-** Run every selected scan type against every target. Each scan type gets a
-** full pass through the port-strided path: speedup extra threads plus the
-** main thread running one stride itself, so speedup 0 simply means a single
-** stride on the main thread (no special-cased sequential path). Results land
-** in results[host][port].state[type]. Returns 0 on success, -1 on failure.
-*/
-static int	run_all_scans(const t_options *opts, int sock, const char *iface,
-		struct in_addr src, t_scan_result **results, t_pcap_stats *stats)
-{
-	int	i;
-
-	for (i = 0; i < SCAN_MAX; i++)
-	{
-		if (!opts->scan[i])
-			continue ;
-		if (run_scan_threaded(opts, sock, (t_scan_type)i, iface, src,
-				results, stats) < 0)
-			return (-1);
-	}
-	return (0);
-}
-
 int	main(int argc, char **argv)
 {
 	t_options		opts;
@@ -112,7 +89,7 @@ int	main(int argc, char **argv)
 	stats = (t_pcap_stats){0, 0};
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
-	if (run_all_scans(&opts, sock, iface, src, results, &stats) < 0)
+	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), close(sock), 1);
 	clock_gettime(CLOCK_MONOTONIC, &end_ts);
 	report_results(&opts, results);

@@ -87,36 +87,79 @@ static int	find_host_idx(const t_options *opts, uint32_t saddr)
 }
 
 /*
-** Listen on the pcap handle until timeout_ms elapses, writing each
-** classified reply into results[h][port].state[type]. The BPF filter
-** already narrows to TCP packets destined to sport, so we only do the
-** per-packet demultiplexing here: saddr -> host index, source port ->
-** target port, then the scan type's classifier turns the reply into a
-** port state. Slots that never get rewritten keep whatever value
-** scan_stride pre-filled them with (the scan type's no_reply_state).
+** Map a reply's destination port (one of our source ports) back to the scan
+** type it belongs to. Because every selected scan type uses its own sport,
+** this is how we tell, e.g., a SYN-scan RST apart from an ACK-scan RST.
+** Returns -1 for ports we did not send from.
 */
-void	scan_collect_replies(pcap_t *p, uint32_t timeout_ms,
-		const t_options *opts, uint16_t sport, t_scan_type type,
-		t_scan_result **results)
+static int	type_for_sport(const t_worker *w, uint16_t dport)
+{
+	int	t;
+
+	t = 0;
+	while (t < SCAN_MAX)
+	{
+		if (w->opts->scan[t] && w->sport[t] == dport)
+			return (t);
+		t++;
+	}
+	return (-1);
+}
+
+/*
+** Demultiplex one captured TCP reply into the results table: saddr -> host,
+** dest port -> scan type, source port -> target port, then that type's
+** classifier turns the flags into a port state. PORT_UNKNOWN means "no
+** verdict" so the slot keeps the no_reply_state scan_run pre-filled.
+*/
+static void	handle_reply(const t_worker *w, size_t off,
+		const struct pcap_pkthdr *hdr, const u_char *data)
+{
+	const struct iphdr	*iph;
+	const struct tcphdr	*tcph;
+	t_port_state		s;
+	int					h;
+	int					t;
+	uint16_t			port;
+
+	if (hdr->caplen < off + sizeof(*iph) + sizeof(*tcph))
+		return ;
+	iph = (const struct iphdr *)(data + off);
+	if (iph->protocol != IPPROTO_TCP)
+		return ;
+	h = find_host_idx(w->opts, iph->saddr);
+	if (h < 0)
+		return ;
+	tcph = (const struct tcphdr *)((const uint8_t *)iph + iph->ihl * 4);
+	t = type_for_sport(w, ntohs(tcph->dest));
+	if (t < 0)
+		return ;
+	port = ntohs(tcph->source);
+	if (port > MAX_PORTS || !w->opts->ports[port])
+		return ;
+	s = scan_ops(t)->classify(tcph);
+	if (s != PORT_UNKNOWN)
+		w->results[h][port].state[t] = s;
+}
+
+/*
+** Single collection window draining this worker's pcap handle for 1000ms.
+** The BPF filter already narrows to TCP replies destined to any of our
+** source ports, so handle_reply does the per-packet demultiplexing.
+*/
+static void	scan_collect_replies(t_worker *w)
 {
 	uint64_t			deadline;
 	size_t				off;
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
-	const struct iphdr	*iph;
-	const struct tcphdr	*tcph;
-	const t_scan_ops	*ops;
-	t_port_state		s;
 	int					rc;
-	int					h;
-	uint16_t			port;
 
-	ops = scan_ops(type);
-	off = dl_header_size(pcap_datalink(p));
-	deadline = now_ms() + timeout_ms;
+	off = dl_header_size(pcap_datalink(w->p));
+	deadline = now_ms() + 1000;
 	while (now_ms() < deadline)
 	{
-		rc = pcap_next_ex(p, &hdr, &data);
+		rc = pcap_next_ex(w->p, &hdr, &data);
 		if (rc == 0)
 		{
 			usleep(1000);
@@ -124,59 +167,54 @@ void	scan_collect_replies(pcap_t *p, uint32_t timeout_ms,
 		}
 		if (rc < 0)
 			break ;
-		if (hdr->caplen < off + sizeof(*iph) + sizeof(*tcph))
-			continue ;
-		iph = (const struct iphdr *)(data + off);
-		if (iph->protocol != IPPROTO_TCP)
-			continue ;
-		h = find_host_idx(opts, iph->saddr);
-		if (h < 0)
-			continue ;
-		tcph = (const struct tcphdr *)((const uint8_t *)iph + iph->ihl * 4);
-		if (ntohs(tcph->dest) != sport)
-			continue ;
-		port = ntohs(tcph->source);
-		if (port > MAX_PORTS || !opts->ports[port])
-			continue ;
-		s = ops->classify(tcph);
-		if (s != PORT_UNKNOWN)
-			results[h][port].state[type] = s;
+		handle_reply(w, off, hdr, data);
 	}
 }
 
 /*
-** Fire-then-listen primitive used by both the threaded and sequential scan
-** paths. stride_id/stride_total partition the port space: this call owns
-** every port p where (p - 1) % stride_total == stride_id. For each owned
-** port that opts->ports[] selects, send a probe (per scan type) to every
-** host, pre-marking the slot with the scan type's no_reply_state. Then
-** drain the pcap handle for timeout_ms; any reply rewrites the slot.
-**
-** The 1000ms collection window starts after the last probe is sent so
-** every probe gets a full reply window.
+** Send every probe this worker owns for one target port: for each selected
+** scan type, mark the slot with that type's no_reply_state and emit the probe
+** (from that type's source port) to every host.
 */
-void	scan_stride(int sock, pcap_t *p, struct in_addr src,
-		uint16_t sport, const t_options *opts, t_scan_type type,
-		int stride_id, int stride_total,
-		t_scan_result **results)
+static void	send_port_probes(t_worker *w, int port)
 {
 	const t_scan_ops	*ops;
 	size_t				h;
-	int					port;
+	int					t;
 
-	ops = scan_ops(type);
-	port = stride_id + 1;
-	while (port <= MAX_PORTS)
+	t = 0;
+	while (t < SCAN_MAX)
 	{
-		if (opts->ports[port])
+		if (w->opts->scan[t])
 		{
-			for (h = 0; h < opts->ip_count; h++)
+			ops = scan_ops(t);
+			for (h = 0; h < w->opts->ip_count; h++)
 			{
-				results[h][port].state[type] = ops->no_reply_state;
-				ops->send(sock, src, sport, opts->ips[h].addr, (uint16_t)port);
+				w->results[h][port].state[t] = ops->no_reply_state;
+				ops->send(w->sock, w->src, w->sport[t],
+					w->opts->ips[h].addr, (uint16_t)port);
 			}
 		}
-		port += stride_total;
+		t++;
 	}
-	scan_collect_replies(p, 1000, opts, sport, type, results);
+}
+
+/*
+** One worker's full pass. It owns every port p where (p - 1) % nthreads == id.
+** It fires all probes for all selected scan types across its whole stride
+** first, then opens a single collection window — so the cost of waiting for
+** replies is paid once for every scan type at once, not once per type.
+*/
+void	scan_run(t_worker *w)
+{
+	int	port;
+
+	port = w->id + 1;
+	while (port <= MAX_PORTS)
+	{
+		if (w->opts->ports[port])
+			send_port_probes(w, port);
+		port += w->nthreads;
+	}
+	scan_collect_replies(w);
 }

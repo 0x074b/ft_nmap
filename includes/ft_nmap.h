@@ -174,7 +174,8 @@ size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 			uint16_t sport, uint16_t dport, t_scan_type type);
 
 	/* pcap/ */
-pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport);
+pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
+			int count);
 
 	/* report/ */
 const char	*port_state_name(t_port_state s);
@@ -190,8 +191,7 @@ typedef struct s_worker
 	int					sock;
 	pcap_t				*p;
 	struct in_addr		src;
-	uint16_t			sport;
-	t_scan_type			scan_type;
+	uint16_t			sport[SCAN_MAX];
 	const t_options		*opts;
 	t_scan_result		**results;
 }	t_worker;
@@ -212,17 +212,10 @@ void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc);
 	/* scanner/ — generic, scan-type-driven; declared after parsing.h because
 	** t_options lives there. The concrete per-type probe builders and reply
 	** classifiers live behind scan_ops() in scanner_internal.h. */
-void	scan_collect_replies(pcap_t *p, uint32_t timeout_ms,
-			const t_options *opts, uint16_t sport, t_scan_type type,
-			t_scan_result **results);
-void	scan_stride(int sock, pcap_t *p, struct in_addr src,
-			uint16_t sport, const t_options *opts, t_scan_type type,
-			int stride_id, int stride_total,
-			t_scan_result **results);
+void	scan_run(t_worker *w);
 
-int		run_scan_threaded(const t_options *opts, int sock,
-			t_scan_type scan_type, const char *iface, struct in_addr src,
-			t_scan_result **results, t_pcap_stats *stats);
+int		run_scan(const t_options *opts, int sock, const char *iface,
+			struct in_addr src, t_scan_result **results, t_pcap_stats *stats);
 void	report_results(const t_options *opts, t_scan_result **results);
 void	report_pcap_stats(const t_pcap_stats *stats);
 
