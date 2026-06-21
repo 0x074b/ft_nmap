@@ -165,10 +165,13 @@ typedef struct s_config
 int		pick_interface(char *iface, struct in_addr *src);
 
 	/* packet/ */
-size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-			uint16_t sport, uint16_t dport);
-size_t	build_ack_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-			uint16_t sport, uint16_t dport);
+void	build_ip_hdr(struct iphdr *iph, struct in_addr src, struct in_addr dst,
+			uint8_t protocol, uint16_t payload_len);
+void	build_tcp_hdr(struct tcphdr *tcph, struct in_addr src,
+			struct in_addr dst, uint16_t sport, uint16_t dport,
+			t_scan_type type);
+size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+			uint16_t sport, uint16_t dport, t_scan_type type);
 
 	/* pcap/ */
 pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport);

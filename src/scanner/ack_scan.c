@@ -12,7 +12,7 @@ int	ack_send(int sock, struct in_addr src, uint16_t sport,
 	uint8_t	buf[60];
 	size_t	len;
 
-	len = build_ack_packet(buf, src, dst, sport, dport);
+	len = build_tcp_packet(buf, src, dst, sport, dport, SCAN_ACK);
 	return (scan_send_raw(sock, buf, len, dst, dport));
 }
 

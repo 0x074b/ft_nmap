@@ -11,7 +11,7 @@ int	syn_send(int sock, struct in_addr src, uint16_t sport,
 	uint8_t	buf[60];
 	size_t	len;
 
-	len = build_syn_packet(buf, src, dst, sport, dport);
+	len = build_tcp_packet(buf, src, dst, sport, dport, SCAN_SYN);
 	return (scan_send_raw(sock, buf, len, dst, dport));
 }
 

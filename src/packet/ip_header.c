@@ -35,37 +35,57 @@ struct s_pseudo
 	uint16_t	len;
 };
 
-static size_t	build_tcp_packet(uint8_t *buf,
-		struct in_addr src, struct in_addr dst,
-		uint16_t sport, uint16_t dport,
-		bool set_syn, bool set_ack)
+/*
+** Fill an IPv4 header shared by every transport. protocol selects TCP/UDP
+** (and friends); payload_len is the size of the transport segment that
+** follows, used to compute tot_len. Owns the IP-header checksum. Caller must
+** have zeroed the buffer (the checksum field in particular) beforehand.
+*/
+void	build_ip_hdr(struct iphdr *iph, struct in_addr src, struct in_addr dst,
+		uint8_t protocol, uint16_t payload_len)
 {
-	struct iphdr	*iph;
-	struct tcphdr	*tcph;
-	struct s_pseudo	ph;
-	uint8_t			pseudo[sizeof(struct s_pseudo) + sizeof(struct tcphdr)];
-	size_t			total;
-
-	total = sizeof(*iph) + sizeof(*tcph);
-	memset(buf, 0, total);
-	iph = (struct iphdr *)buf;
-	tcph = (struct tcphdr *)(buf + sizeof(*iph));
 	iph->ihl = 5;
 	iph->version = 4;
-	iph->tot_len = htons(total);
+	iph->tot_len = htons((uint16_t)(sizeof(*iph) + payload_len));
 	iph->id = htons((uint16_t)(rand() & 0xffff));
 	iph->ttl = 64;
-	iph->protocol = IPPROTO_TCP;
+	iph->protocol = protocol;
 	iph->saddr = src.s_addr;
 	iph->daddr = dst.s_addr;
 	iph->check = in_cksum(iph, sizeof(*iph));
-	tcph->source = htons(sport);
-	tcph->dest = htons(dport);
-	tcph->seq = htonl((uint32_t)rand());
-	tcph->doff = 5;
-	tcph->syn = set_syn ? 1 : 0;
-	tcph->ack = set_ack ? 1 : 0;
-	tcph->window = htons(1024);
+}
+
+/*
+** Translate a scan type into its TCP flag set. SYN/ACK/FIN are single flags,
+** NULL sets nothing, XMAS lights FIN+PSH+URG. Non-TCP types (UDP) are not
+** routed here and leave the header flagless.
+*/
+static void	set_tcp_flags(struct tcphdr *tcph, t_scan_type type)
+{
+	if (type == SCAN_SYN)
+		tcph->syn = 1;
+	else if (type == SCAN_ACK)
+		tcph->ack = 1;
+	else if (type == SCAN_FIN)
+		tcph->fin = 1;
+	else if (type == SCAN_XMAS)
+	{
+		tcph->fin = 1;
+		tcph->psh = 1;
+		tcph->urg = 1;
+	}
+}
+
+/*
+** TCP checksum over the pseudo-header + TCP header. tcph->check must be zero
+** on entry (handled by the zeroed buffer).
+*/
+static uint16_t	tcp_checksum(const struct tcphdr *tcph, struct in_addr src,
+		struct in_addr dst)
+{
+	struct s_pseudo	ph;
+	uint8_t			pseudo[sizeof(struct s_pseudo) + sizeof(struct tcphdr)];
+
 	ph.saddr = src.s_addr;
 	ph.daddr = dst.s_addr;
 	ph.zero = 0;
@@ -73,26 +93,42 @@ static size_t	build_tcp_packet(uint8_t *buf,
 	ph.len = htons(sizeof(*tcph));
 	memcpy(pseudo, &ph, sizeof(ph));
 	memcpy(pseudo + sizeof(ph), tcph, sizeof(*tcph));
-	tcph->check = in_cksum(pseudo, sizeof(pseudo));
+	return (in_cksum(pseudo, sizeof(pseudo)));
+}
+
+/*
+** Fill a TCP header for the given scan type (flags driven by set_tcp_flags)
+** and stamp its pseudo-header checksum. Caller must have zeroed the buffer.
+*/
+void	build_tcp_hdr(struct tcphdr *tcph, struct in_addr src,
+		struct in_addr dst, uint16_t sport, uint16_t dport, t_scan_type type)
+{
+	tcph->source = htons(sport);
+	tcph->dest = htons(dport);
+	tcph->seq = htonl((uint32_t)rand());
+	tcph->doff = 5;
+	tcph->window = htons(1024);
+	set_tcp_flags(tcph, type);
+	tcph->check = tcp_checksum(tcph, src, dst);
+}
+
+/*
+** Build an IPv4 + TCP probe for the given scan type into buf. Returns the
+** total length. Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) =
+** 40 bytes.
+*/
+size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+		uint16_t sport, uint16_t dport, t_scan_type type)
+{
+	struct iphdr	*iph;
+	struct tcphdr	*tcph;
+	size_t			total;
+
+	total = sizeof(*iph) + sizeof(*tcph);
+	memset(buf, 0, total);
+	iph = (struct iphdr *)buf;
+	tcph = (struct tcphdr *)(buf + sizeof(*iph));
+	build_ip_hdr(iph, src, dst, IPPROTO_TCP, sizeof(*tcph));
+	build_tcp_hdr(tcph, src, dst, sport, dport, type);
 	return (total);
-}
-
-/*
-** Build an IPv4 + TCP SYN probe into buf. Returns the total length.
-** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
-*/
-size_t	build_syn_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-		uint16_t sport, uint16_t dport)
-{
-	return (build_tcp_packet(buf, src, dst, sport, dport, true, false));
-}
-
-/*
-** Build an IPv4 + TCP ACK probe into buf. Returns the total length.
-** Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) = 40 bytes.
-*/
-size_t	build_ack_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-		uint16_t sport, uint16_t dport)
-{
-	return (build_tcp_packet(buf, src, dst, sport, dport, false, true));
 }
