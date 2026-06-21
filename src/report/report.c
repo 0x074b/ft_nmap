@@ -109,3 +109,14 @@ void	report_results(const t_options *opts, t_scan_result **results)
 	for (h = 0; h < opts->ip_count; h++)
 		report_host(opts, h, results);
 }
+
+/*
+** Summed capture counters across every pcap handle used during the scan.
+** A non-zero drop count means the kernel discarded replies we never saw —
+** likely inflating the "filtered" tally — so it is worth surfacing.
+*/
+void	report_pcap_stats(const t_pcap_stats *stats)
+{
+	printf("\nPackets captured: %lu, dropped by kernel: %lu\n",
+		stats->recv, stats->drop);
+}

@@ -70,7 +70,7 @@ static int	open_worker_handles(t_worker *workers, int n, const char *iface)
 
 int	run_scan_threaded(const t_options *opts, int sock,
 		t_scan_type scan_type, const char *iface, struct in_addr src,
-		t_scan_result **results)
+		t_scan_result **results, t_pcap_stats *stats)
 {
 	t_worker	*workers;
 	pthread_t	*tids;
@@ -99,7 +99,10 @@ int	run_scan_threaded(const t_options *opts, int sock,
 	for (i = 0; i < n; i++)
 		pthread_join(tids[i], NULL);
 	for (i = 0; i < n; i++)
+	{
+		accumulate_pcap_stats(workers[i].p, stats);
 		pcap_close(workers[i].p);
+	}
 	free(workers);
 	free(tids);
 	return (0);

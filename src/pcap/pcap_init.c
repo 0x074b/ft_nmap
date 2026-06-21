@@ -41,3 +41,19 @@ pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport)
 	}
 	return (p);
 }
+
+/*
+** Read the kernel capture counters off a handle and fold them into acc. Must
+** be called while the handle is still open (i.e. just before pcap_close).
+** pcap_stats failing (e.g. on some pseudo-interfaces) is non-fatal — we just
+** skip that handle's contribution.
+*/
+void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc)
+{
+	struct pcap_stat	ps;
+
+	if (pcap_stats(p, &ps) < 0)
+		return ;
+	acc->recv += ps.ps_recv;
+	acc->drop += ps.ps_drop;
+}

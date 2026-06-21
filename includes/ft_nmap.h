@@ -196,6 +196,19 @@ typedef struct s_worker
 	t_scan_result		**results;
 }	t_worker;
 
+/*
+** Capture-side counters summed across every pcap handle (each scan pass and,
+** when threaded, each worker). Reported at the end so dropped replies — the
+** usual cause of spurious "filtered" verdicts — are visible.
+*/
+typedef struct s_pcap_stats
+{
+	unsigned long	recv;
+	unsigned long	drop;
+}	t_pcap_stats;
+
+void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc);
+
 	/* scanner/ — generic, scan-type-driven; declared after parsing.h because
 	** t_options lives there. The concrete per-type probe builders and reply
 	** classifiers live behind scan_ops() in scanner_internal.h. */
@@ -209,7 +222,8 @@ void	scan_stride(int sock, pcap_t *p, struct in_addr src,
 
 int		run_scan_threaded(const t_options *opts, int sock,
 			t_scan_type scan_type, const char *iface, struct in_addr src,
-			t_scan_result **results);
+			t_scan_result **results, t_pcap_stats *stats);
 void	report_results(const t_options *opts, t_scan_result **results);
+void	report_pcap_stats(const t_pcap_stats *stats);
 
 #endif

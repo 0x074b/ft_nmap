@@ -69,7 +69,7 @@ static void	free_results(t_scan_result **r, size_t ip_count)
 ** results[host][port].state[type]. Returns 0 on success, -1 on failure.
 */
 static int	run_all_scans(const t_options *opts, int sock, const char *iface,
-		struct in_addr src, t_scan_result **results)
+		struct in_addr src, t_scan_result **results, t_pcap_stats *stats)
 {
 	int			i;
 	uint16_t	sport;
@@ -87,10 +87,11 @@ static int	run_all_scans(const t_options *opts, int sock, const char *iface,
 				return (-1);
 			scan_stride(sock, p, src, sport, opts, (t_scan_type)i, 0, 1,
 				results);
+			accumulate_pcap_stats(p, stats);
 			pcap_close(p);
 		}
 		else if (run_scan_threaded(opts, sock, (t_scan_type)i, iface, src,
-				results) < 0)
+				results, stats) < 0)
 			return (-1);
 	}
 	return (0);
@@ -103,6 +104,7 @@ int	main(int argc, char **argv)
 	struct in_addr	src;
 	int				sock;
 	t_scan_result	**results;
+	t_pcap_stats	stats;
 	struct timespec	start_ts;
 	struct timespec	end_ts;
 	double			elapsed_s;
@@ -119,12 +121,14 @@ int	main(int argc, char **argv)
 	results = alloc_results(opts.ip_count);
 	if (!results)
 		return (close(sock), 1);
+	stats = (t_pcap_stats){0, 0};
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
-	if (run_all_scans(&opts, sock, iface, src, results) < 0)
+	if (run_all_scans(&opts, sock, iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), close(sock), 1);
 	clock_gettime(CLOCK_MONOTONIC, &end_ts);
 	report_results(&opts, results);
+	report_pcap_stats(&stats);
 	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
 		+ (double)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000000.0;
 	printf("Scan completed in %.2f seconds\n", elapsed_s);
