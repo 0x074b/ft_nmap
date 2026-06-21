@@ -7,26 +7,6 @@
 
 #include "ft_nmap.h"
 
-/*
-** If the user selected no scan type, default to running every scan type.
-** Returns the number of scan types that will run (always >= 1 afterwards).
-*/
-static int	ensure_scan_selection(t_options *opts)
-{
-	int	i;
-	int	count;
-
-	count = 0;
-	for (i = 0; i < SCAN_MAX; i++)
-		if (opts->scan[i])
-			count++;
-	if (count > 0)
-		return (count);
-	for (i = 0; i < SCAN_MAX; i++)
-		opts->scan[i] = true;
-	return (SCAN_MAX);
-}
-
 static int	open_raw_socket(void)
 {
 	int	sock;
@@ -129,7 +109,6 @@ int	main(int argc, char **argv)
 
 	if (parse_opts(argc, argv, &opts) < 0)
 		return (1);
-	ensure_scan_selection(&opts);
 	if (pick_interface(iface, &src) < 0)
 		return (1);
 	srand((unsigned int)time(NULL));
