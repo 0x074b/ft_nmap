@@ -16,9 +16,9 @@
 static const t_scan_ops	g_scan_ops[SCAN_MAX] = {
 	[SCAN_SYN] = {syn_send, syn_recv, PORT_FILTERED, "SYN"},
 	[SCAN_ACK] = {ack_send, ack_recv, PORT_FILTERED, "ACK"},
-	[SCAN_FIN] = {fin_send, fin_recv, PORT_UNKNOWN, "FIN"},
-	[SCAN_NULL] = {null_send, null_recv, PORT_UNKNOWN, "NULL"},
-	[SCAN_XMAS] = {xmas_send, xmas_recv, PORT_UNKNOWN, "XMAS"},
+	[SCAN_FIN] = {fin_send, fin_recv, PORT_OPEN_FILTERED, "FIN"},
+	[SCAN_NULL] = {null_send, null_recv, PORT_OPEN_FILTERED, "NULL"},
+	[SCAN_XMAS] = {xmas_send, xmas_recv, PORT_OPEN_FILTERED, "XMAS"},
 	[SCAN_UDP] = {udp_send, udp_recv, PORT_OPEN_FILTERED, "UDP"},
 };
 
