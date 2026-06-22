@@ -9,16 +9,13 @@
 ** unreachable responses can be classified.
 */
 static void	build_sport_filter(char *filter, size_t size,
-		const uint16_t *sports, int count, bool udp)
+		const uint16_t *sports, int count, int udp)
 {
 	size_t	off;
 	int		i;
 
-	if (udp)
-		off = (size_t)snprintf(filter, size,
-			"icmp or ((tcp or udp) and (");
-	else
-		off = (size_t)snprintf(filter, size, "tcp and (");
+	off = (size_t)snprintf(filter, size,
+		udp ? "icmp or ((tcp or udp) and (" : "tcp and (");
 	i = 0;
 	while (i < count)
 	{
@@ -26,10 +23,7 @@ static void	build_sport_filter(char *filter, size_t size,
 				i ? " or " : "", sports[i]);
 		i++;
 	}
-	if (udp)
-		snprintf(filter + off, size - off, "))";
-	else
-		snprintf(filter + off, size - off, ")");
+	off += (size_t)snprintf(filter + off, size - off, udp ? "))" : ")");
 }
 
 /*
@@ -38,7 +32,7 @@ static void	build_sport_filter(char *filter, size_t size,
 ** on error (message printed to stderr).
 */
 pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
-		int count, bool udp)
+		int count, int udp)
 {
 	char				errbuf[PCAP_ERRBUF_SIZE];
 	struct bpf_program	fp;

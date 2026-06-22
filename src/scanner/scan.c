@@ -19,7 +19,7 @@ static const t_scan_ops	g_scan_ops[SCAN_MAX] = {
 	[SCAN_FIN] = {fin_send, fin_recv, PORT_UNKNOWN, "FIN"},
 	[SCAN_NULL] = {null_send, null_recv, PORT_UNKNOWN, "NULL"},
 	[SCAN_XMAS] = {xmas_send, xmas_recv, PORT_UNKNOWN, "XMAS"},
-	[SCAN_UDP] = {udp_send, udp_recv, PORT_UNKNOWN, "UDP"},
+	[SCAN_UDP] = {udp_send, udp_recv, PORT_OPEN_FILTERED, "UDP"},
 };
 
 const t_scan_ops	*scan_ops(t_scan_type type)
