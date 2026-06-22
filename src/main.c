@@ -88,6 +88,11 @@ int	main(int argc, char **argv)
 		return (close(sock), 1);
 	stats = (t_pcap_stats){0, 0};
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
+	
+	/* Initialize OS detection if enabled */
+	if (opts.os_detection)
+		os_detect_init();
+	
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), close(sock), 1);

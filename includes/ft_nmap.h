@@ -217,9 +217,10 @@ void	scan_run(t_worker *w);
 int		run_scan(const t_options *opts, int sock, const char *iface,
 			struct in_addr src, t_scan_result **results, t_pcap_stats *stats);
 
-	/* OS detection - analyzes captured packets for fingerprinting */
-void	os_detect_from_packets(t_worker *w, const struct iphdr *iph,
-			size_t off, const struct pcap_pkthdr *hdr, const u_char *data);
+	/* OS detection - TCP/IP fingerprinting */
+void	os_detect_init(void);
+void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
+			const struct tcphdr *tcph);
 void	os_detect_analyze(t_scan_result **results, size_t ip_count);
 
 void	report_results(const t_options *opts, t_scan_result **results);
