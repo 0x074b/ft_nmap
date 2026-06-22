@@ -70,17 +70,6 @@ static void	print_port_row(const t_options *opts, const t_scan_result *res)
 		if (opts->scan[i])
 			printf("%-15s", port_state_name(res->state[i]));
 	printf("\n");
-	
-	/* Print service version if detected */
-	if (opts->version_detection && res->service.detected)
-	{
-		printf("         Service: %s", res->service.name);
-		if (res->service.version[0])
-			printf(" v%s", res->service.version);
-		if (res->service.banner[0])
-			printf(" (%s)", res->service.banner);
-		printf("\n");
-	}
 }
 
 static void	report_host(const t_options *opts, size_t h,
@@ -92,11 +81,6 @@ static void	report_host(const t_options *opts, size_t h,
 
 	inet_ntop(AF_INET, &opts->ips[h].addr, buf, sizeof(buf));
 	printf("\nScan report for %s (%s)\n", opts->ips[h].input, buf);
-	
-	/* Display OS detection info if enabled */
-	if (opts->os_detection)
-		printf("OS Detection: (fingerprinting available)\n");
-	
 	print_table_header(opts);
 	shown = 0;
 	port = 1;

@@ -92,34 +92,6 @@ int	main(int argc, char **argv)
 	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), close(sock), 1);
 	clock_gettime(CLOCK_MONOTONIC, &end_ts);
-	
-	/* Run post-scan detection phases */
-	if (opts.version_detection)
-	{
-		size_t h;
-		int port;
-		printf("\nProbing for service versions...\n");
-		for (h = 0; h < opts.ip_count; h++)
-		{
-			for (port = 1; port <= MAX_PORTS; port++)
-			{
-				if (opts.ports[port] && results[h][port].state[SCAN_SYN] == PORT_OPEN)
-				{
-					/* Detect service on this open port */
-					detect_service_version(opts.ips[h].addr, (uint16_t)port,
-						&results[h][port].service,
-						opts.timing_level == 0 ? 5000 : 1000);
-				}
-			}
-		}
-	}
-	
-	if (opts.os_detection)
-	{
-		printf("Running OS detection...\n");
-		analyze_os_fingerprint(&opts, results);
-	}
-	
 	report_results(&opts, results);
 	report_pcap_stats(&stats);
 	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)

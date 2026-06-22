@@ -231,19 +231,6 @@ static void	send_port_probes(t_worker *w, int port)
 	const t_scan_ops	*ops;
 	size_t				h;
 	int					t;
-	uint32_t			delay_ms;
-
-	/* Calculate inter-probe delay in milliseconds based on timing level
-	 * T0(paranoid)=300ms, T1(sneaky)=100ms, T2(polite)=10ms,
-	 * T3(normal)=0ms, T4(aggressive)=0ms, T5(insane)=0ms */
-	if (w->opts->timing_level == 0)
-		delay_ms = 300;
-	else if (w->opts->timing_level == 1)
-		delay_ms = 100;
-	else if (w->opts->timing_level == 2)
-		delay_ms = 10;
-	else
-		delay_ms = 0;
 
 	t = 0;
 	while (t < SCAN_MAX)
@@ -256,8 +243,6 @@ static void	send_port_probes(t_worker *w, int port)
 				w->results[h][port].state[t] = ops->no_reply_state;
 				ops->send(w->sock, w->src, w->sport[t],
 					w->opts->ips[h].addr, (uint16_t)port);
-				if (delay_ms > 0 && !(t == SCAN_MAX - 1 && h == w->opts->ip_count - 1))
-					usleep(delay_ms * 1000);
 			}
 		}
 		t++;
