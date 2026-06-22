@@ -206,6 +206,8 @@ typedef struct s_pcap_stats
 }	t_pcap_stats;
 
 void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc);
+pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
+		int count, int udp);
 
 	/* scanner/ — generic, scan-type-driven; declared after parsing.h because
 	** t_options lives there. The concrete per-type probe builders and reply
