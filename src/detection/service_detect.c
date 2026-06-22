@@ -248,55 +248,113 @@ static bool	detect_tls_by_response(const unsigned char *response, size_t len)
 }
 
 /*
-** Detect service from response heuristics
+** LAYER 2: Classify service + detect TLS flag in PARALLEL
+** Never returns NULL - always fallback to "unknown"
+** Returns service name AND sets is_tls flag independently
+** 
+** KEY LOGIC:
+** - Text patterns take priority (HTTP, SSH, FTP, etc)
+** - HTTP + TLS = HTTPS
+** - TLS flag without text pattern = HTTPS
+** - Otherwise = unknown
 */
-static const char	*detect_service_type(const char *response, size_t len)
+typedef struct s_classification
 {
+	const char	*service;
+	bool		is_tls;
+}	t_classification;
+
+static t_classification	classify_response(const char *response, size_t len)
+{
+	t_classification	result = {"unknown", false};
+	bool				has_http;
+
 	if (!response || len == 0)
-		return (NULL);
+		return (result);
 
-	/* Check for TLS binary first (before HTTP text patterns) */
-	if (detect_tls_by_response((unsigned char *)response, len))
-		return ("https");
+	/* STEP 1: Detect TLS (independent flag for HTTPS services) */
+	result.is_tls = detect_tls_by_response((unsigned char *)response, len);
 
-	/* Check for HTTP */
-	if (strstr(response, "HTTP/") || strstr(response, "Server:"))
-		return ("http");
+	/* STEP 2: Try text patterns IN PARALLEL (not sequential if/return) */
 	
-	/* Check for SSH */
+	/* HTTP patterns (check BEFORE SSH to avoid false positives) */
+	has_http = (strstr(response, "HTTP/") != NULL || 
+	            strstr(response, "Server:") != NULL ||
+	            strstr(response, "Content-Type:") != NULL);
+	
+	if (has_http)
+	{
+		/* HTTP + TLS = HTTPS, HTTP only = HTTP */
+		result.service = result.is_tls ? "https" : "http";
+		return (result);
+	}
+	
+	/* SSH pattern (must be strict: "SSH-" prefix) */
 	if (strncmp(response, "SSH-", 4) == 0)
-		return ("ssh");
+	{
+		result.service = "ssh";
+		return (result);
+	}
 	
-	/* Check for FTP */
-	if (response[0] >= '2' && response[0] <= '5' && 
+	/* FTP pattern (3-digit code + space) */
+	if (len >= 4 && response[0] >= '2' && response[0] <= '5' && 
 		isdigit(response[1]) && isdigit(response[2]) && response[3] == ' ')
-		return ("ftp");
+	{
+		result.service = "ftp";
+		return (result);
+	}
 	
-	/* Check for SMTP */
+	/* SMTP pattern (220 banner) */
 	if (strncmp(response, "220", 3) == 0)
-		return ("smtp");
+	{
+		result.service = "smtp";
+		return (result);
+	}
 	
-	/* Check for POP3 */
+	/* POP3 pattern (+OK) */
 	if (strncmp(response, "+OK", 3) == 0)
-		return ("pop3");
+	{
+		result.service = "pop3";
+		return (result);
+	}
 	
-	/* Check for IMAP */
+	/* IMAP pattern (* OK) */
 	if (strstr(response, "* OK"))
-		return ("imap");
+	{
+		result.service = "imap";
+		return (result);
+	}
 	
-	/* Check for MySQL */
+	/* MySQL pattern (specific binary marker) */
 	if (len > 6 && response[4] == '\x00' && response[5] == '\x00' && response[6] == '\x00')
-		return ("mysql");
+	{
+		result.service = "mysql";
+		return (result);
+	}
 	
-	/* Check for PostgreSQL */
+	/* PostgreSQL pattern */
 	if (strstr(response, "NOTICE:") || strstr(response, "FATAL:"))
-		return ("postgresql");
+	{
+		result.service = "postgresql";
+		return (result);
+	}
 	
-	/* Check for VNC */
+	/* VNC pattern (RFB) */
 	if (strncmp(response, "RFB", 3) == 0)
-		return ("vnc");
-	
-	return (NULL);
+	{
+		result.service = "vnc";
+		return (result);
+	}
+
+	/* STEP 3: Fallback: if no text pattern but TLS detected = HTTPS */
+	if (result.is_tls)
+	{
+		result.service = "https";
+		return (result);
+	}
+
+	/* STEP 4: Last resort = "unknown" (never NULL) */
+	return (result);
 }
 
 /*
@@ -411,15 +469,20 @@ static const t_probe_sequence	*find_probe_sequence(uint16_t port)
 
 /*
 ** Detect service on a specific port
-** Uses multi-probe approach and heuristics
+** LAYER 1: Capture raw response
+** LAYER 2: Classify (service + TLS flag)
+** LAYER 3: Enrich version
+** LAYER 4: Display fallback ALWAYS (never silent)
 */
 int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 {
 	const t_probe_sequence	*seq;
 	char					response[SERVICE_BUFFER_SIZE];
 	int						n;
-	const char				*detected_service;
+	t_classification		classify;
 	const char				*version;
+	char					*banner_end;
+	size_t					banner_len;
 
 	if (!service_str)
 		return (-1);
@@ -430,7 +493,7 @@ int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 	if (!seq)
 		return (-1);
 
-	/* Try primary probe */
+	/* ===== LAYER 1: Capture raw response ===== */
 	n = send_service_probe(addr, port, seq->primary_probe, seq->primary_len,
 			response, sizeof(response));
 
@@ -444,34 +507,51 @@ int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 	if (n <= 0)
 		return (-1);
 
-	/* Auto-detect service type from response (includes TLS detection) */
-	detected_service = detect_service_type(response, n);
+	/* DEBUG: Print raw response for diagnostics */
+	/* Uncomment to see what we received */
+	/* printf("[DEBUG] Port %d raw response (%d bytes):\n", port, n);
+	   for (int i = 0; i < (n < 100 ? n : 100); i++)
+	       printf("%02x ", (unsigned char)response[i]);
+	   printf("\n%.*s\n---\n", (n < 200 ? n : 200), response); */
 
-	if (detected_service)
+	/* ===== LAYER 2: Classify (service + TLS flag in parallel) ===== */
+	classify = classify_response(response, n);
+
+	/* ===== LAYER 3: Enrich with version from signature database ===== */
+	version = match_signature(classify.service, response);
+
+	/* ===== LAYER 4: Display (ALWAYS fallback, never silent) ===== */
+	if (version)
 	{
-		/* Look up version in signature database */
-		version = match_signature(detected_service, response);
-		if (version)
-			snprintf(service_str, SERVICE_LEN, "%s: %s", detected_service, version);
+		/* We have exact version match */
+		snprintf(service_str, SERVICE_LEN, "%s: %s", classify.service, version);
+	}
+	else
+	{
+		/* Extract first line as fallback banner */
+		banner_end = strchr(response, '\n');
+		if (!banner_end)
+			banner_end = strchr(response, '\r');
+		
+		if (banner_end)
+			banner_len = banner_end - response;
+		else
+			banner_len = strlen(response);
+
+		/* Limit banner to 150 chars for display */
+		if (banner_len > 150)
+			banner_len = 150;
+
+		if (banner_len > 0)
+		{
+			/* Show service + raw banner (best-effort fallback) */
+			snprintf(service_str, SERVICE_LEN, "%s: %.*s",
+					classify.service, (int)banner_len, response);
+		}
 		else
 		{
-			/* Extract banner line */
-			char	*nl;
-			size_t	len;
-
-			nl = strchr(response, '\n');
-			if (!nl)
-				nl = strchr(response, '\r');
-			if (nl)
-				len = nl - response;
-			else
-				len = strlen(response);
-
-			if (len > 0 && len < 150)
-				snprintf(service_str, SERVICE_LEN, "%s: %.*s",
-						detected_service, (int)len, response);
-			else
-				snprintf(service_str, SERVICE_LEN, "%s", detected_service);
+			/* Last resort: just service name */
+			snprintf(service_str, SERVICE_LEN, "%s", classify.service);
 		}
 	}
 
