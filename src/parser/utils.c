@@ -89,15 +89,38 @@ int	resolve_host(const char *host, struct in_addr *out)
 }
 
 /*
+** Return the index of the first host already resolved to addr, or -1 if none.
+** Replies only carry a source IP, so two entries sharing an IP are
+** indistinguishable on the wire and their replies would all route to the
+** first slot — dedup on the resolved IP keeps that from happening.
+*/
+static int	find_duplicate_ip(const t_options *opts, struct in_addr addr)
+{
+	size_t	h;
+
+	h = 0;
+	while (h < opts->ip_count)
+	{
+		if (opts->ips[h].addr.s_addr == addr.s_addr)
+			return ((int)h);
+		h++;
+	}
+	return (-1);
+}
+
+/*
 ** Append a single host to opts->ips. Resolves it up front so failures
 ** abort parsing early, and grows the ips array geometrically up to
-** MAX_TARGETS.
+** MAX_TARGETS. Hosts resolving to an already-listed IP are skipped (not an
+** error): scanning the same IP twice yields identical results and the reply
+** routing cannot tell duplicate slots apart.
 */
 int	add_host(t_options *opts, const char *host)
 {
 	struct in_addr	addr;
 	t_host			*tmp;
 	size_t			new_cap;
+	int				dup;
 
 	if (opts->ip_count >= MAX_TARGETS)
 		return (fprintf(stderr,
@@ -106,6 +129,10 @@ int	add_host(t_options *opts, const char *host)
 		return (fprintf(stderr, "Error: host too long: %s\n", host), -1);
 	if (resolve_host(host, &addr) < 0)
 		return (-1);
+	dup = find_duplicate_ip(opts, addr);
+	if (dup >= 0)
+		return (fprintf(stderr, "Note: skipping '%s', duplicate of '%s'\n",
+				host, opts->ips[dup].input), 0);
 	if (opts->ip_count >= opts->ip_cap)
 	{
 		new_cap = opts->ip_cap ? opts->ip_cap * 2 : 8;
