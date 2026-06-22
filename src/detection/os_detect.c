@@ -82,8 +82,41 @@ static int	extract_tcp_options_len(const struct tcphdr *tcph)
 }
 
 /*
-** Extract OS fingerprint from a SYN-ACK packet
-** Called during packet capture when we receive SYN-ACK responses
+** Reconstruct probable initial TTL
+** Common OS TTLs: Linux=64, Windows=128, Cisco=255
+** After network hops, received TTL is lower
+** We reverse-engineer the initial value
+*/
+static uint8_t	reconstruct_initial_ttl(uint8_t received_ttl)
+{
+	int		ttl_candidates[] = {32, 60, 64, 80, 120, 128, 255};
+	int		best_ttl;
+	int		min_diff;
+	int		i;
+	int		diff;
+
+	best_ttl = 64;
+	min_diff = 256;
+	i = 0;
+	while (i < 7)
+	{
+		diff = ttl_candidates[i] - received_ttl;
+		if (diff < 0)
+			diff = -diff;
+		if (diff < min_diff)
+		{
+			min_diff = diff;
+			best_ttl = ttl_candidates[i];
+		}
+		i++;
+	}
+	return (best_ttl);
+}
+
+/*
+** Extract OS fingerprint from TCP packets (SYN-ACK or RST)
+** Collects TTL, window size, DF flag, TCP options
+** Called when receiving replies from target
 */
 void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
 		const struct tcphdr *tcph)
@@ -91,12 +124,9 @@ void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
 	t_fingerprint	*fp;
 	int				opt_len;
 	bool			df;
+	uint8_t			reconstructed_ttl;
 
 	if (host_idx < 0 || host_idx >= MAX_TARGETS || !iph || !tcph)
-		return ;
-
-	/* Only process SYN-ACK packets */
-	if (!tcph->syn || !tcph->ack)
 		return ;
 
 	fp = &g_fingerprints[host_idx];
@@ -105,12 +135,21 @@ void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
 	if (fp->valid)
 		return ;
 
+	/* Collect fingerprints from SYN-ACK (open ports) or RST (closed ports) */
+	if (!((tcph->syn && tcph->ack) || tcph->rst))
+		return ;
+
 	fp->ttl = iph->ttl;
 	fp->window = ntohs(tcph->window);
 	df = (ntohs(iph->frag_off) & 0x4000) != 0;
 	fp->df = df;
 	opt_len = extract_tcp_options_len(tcph);
 	fp->tcp_opt_len = (uint8_t)(opt_len & 0xFF);
+	
+	/* Reconstruct the probable initial TTL (accounting for network hops) */
+	reconstructed_ttl = reconstruct_initial_ttl(iph->ttl);
+	fp->ttl = reconstructed_ttl;
+	
 	fp->valid = true;
 }
 
@@ -126,8 +165,8 @@ static int	score_fingerprint(const t_fingerprint *fp, const t_os_db *db)
 	if (!fp || !db)
 		return (0);
 
-	/* TTL matching - allow ±2 for network hops */
-	if (fp->ttl >= db->ttl - 2 && fp->ttl <= db->ttl + 2)
+	/* TTL matching - exact match (after reconstruction) */
+	if (fp->ttl == db->ttl)
 		score += 35;
 	else
 		return (0);  /* TTL mismatch is disqualifying */
@@ -136,7 +175,7 @@ static int	score_fingerprint(const t_fingerprint *fp, const t_os_db *db)
 	if (fp->window == db->window)
 		score += 30;
 	else if (fp->window > db->window * 0.75 && fp->window < db->window * 1.25)
-		score += 15;  /* Close match */
+		score += 15;  /* Close match (±25%) */
 
 	/* DF flag - exact match */
 	if (fp->df == db->df)
@@ -182,9 +221,16 @@ void	os_detect_analyze(t_scan_result **results, size_t ip_count)
 	{
 		fp = &g_fingerprints[h];
 		
-		/* Skip if no fingerprint collected */
+		/* Debug: Check if fingerprint was collected */
 		if (!fp->valid)
+		{
+			printf("Host %zu: no fingerprint collected\n", h);
 			continue ;
+		}
+
+		/* Debug: Show what we collected */
+		printf("Host %zu: TTL=%u Window=%u DF=%s OptLen=%u\n",
+				h, fp->ttl, fp->window, fp->df ? "yes" : "no", fp->tcp_opt_len);
 
 		best_db = -1;
 		best_score = 0;
@@ -210,6 +256,7 @@ void	os_detect_analyze(t_scan_result **results, size_t ip_count)
 					db->name, db->confidence * 100.0);
 			strncpy(results[h][0].service.name, buf, SERVICE_LEN - 1);
 			results[h][0].service.detected = true;
+			printf("Host %zu: Matched -> %s (score=%d)\n", h, buf, best_score);
 		}
 		else if (fp->valid)
 		{
@@ -220,6 +267,7 @@ void	os_detect_analyze(t_scan_result **results, size_t ip_count)
 					fp->tcp_opt_len);
 			strncpy(results[h][0].service.name, buf, SERVICE_LEN - 1);
 			results[h][0].service.detected = true;
+			printf("Host %zu: No confident match (best_score=%d)\n", h, best_score);
 		}
 	}
 }

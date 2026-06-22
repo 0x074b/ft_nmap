@@ -150,8 +150,8 @@ static void	handle_reply(const t_worker *w, size_t off,
 		if (s != PORT_UNKNOWN)
 			w->results[h][port].state[t] = s;
 		
-		/* OS Detection: Extract fingerprint from SYN-ACK responses */
-		if (w->opts->os_detection && (tcph->syn && tcph->ack))
+		/* OS Detection: Extract fingerprint from SYN-ACK or RST */
+		if (w->opts->os_detection && ((tcph->syn && tcph->ack) || tcph->rst))
 			os_extract_fingerprint(h, (struct iphdr *)iph, (struct tcphdr *)tcph);
 		
 		return ;
