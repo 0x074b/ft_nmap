@@ -189,6 +189,13 @@ static const t_service_sig	g_service_sigs[] = {
 	{"http", "Microsoft-IIS/8.5", "IIS 8.5", 95},
 	{"http", "Microsoft-IIS", "IIS (unknown version)", 75},
 	
+	/* HTTPS (same servers, just over TLS) */
+	{"https", "Apache/2.4.41", "Apache 2.4.41 (TLS)", 95},
+	{"https", "Apache/2.4.51", "Apache 2.4.51 (TLS)", 95},
+	{"https", "nginx/1.18", "Nginx 1.18.0 (TLS)", 95},
+	{"https", "nginx/1.20", "Nginx 1.20.0 (TLS)", 95},
+	{"https", "Microsoft-IIS", "IIS (TLS)", 90},
+	
 	/* FTP */
 	{"ftp", "ProFTPD 1.3", "ProFTPD 1.3.x", 90},
 	{"ftp", "vsftpd 2", "vsftpd 2.x", 90},
@@ -225,6 +232,10 @@ static const char	*detect_service_type(const char *response, size_t len)
 	if (!response || len == 0)
 		return (NULL);
 
+	/* Check for TLS binary first (before HTTP text patterns) */
+	if (detect_tls_by_response((unsigned char *)response, len))
+		return ("https");
+
 	/* Check for HTTP */
 	if (strstr(response, "HTTP/") || strstr(response, "Server:"))
 		return ("http");
@@ -251,7 +262,7 @@ static const char	*detect_service_type(const char *response, size_t len)
 		return ("imap");
 	
 	/* Check for MySQL */
-	if (response[4] == '\x00' && response[5] == '\x00' && response[6] == '\x00')
+	if (len > 6 && response[4] == '\x00' && response[5] == '\x00' && response[6] == '\x00')
 		return ("mysql");
 	
 	/* Check for PostgreSQL */
@@ -266,65 +277,23 @@ static const char	*detect_service_type(const char *response, size_t len)
 }
 
 /*
-** Try to detect TLS/SSL on port
-** Send ClientHello and check for ServerHello
+** Detect TLS/SSL by looking for binary TLS record markers
+** If HTTP GET returns binary data starting with 0x16 0x03 = TLS
+** Returns true if TLS detected, false if plain HTTP or error
 */
-static bool	has_tls(struct in_addr addr, uint16_t port)
+static bool	detect_tls_by_response(const unsigned char *response, size_t len)
 {
-	int					sock;
-	struct sockaddr_in	saddr;
-	struct timeval		tv;
-	fd_set				rfds;
-	unsigned char		response[1024];
-	int					n;
-	
-	/* TLS Client Hello (basic) */
-	static const unsigned char	tls_hello[] = {
-		0x16, 0x03, 0x01, 0x00, 0x4a, 0x01, 0x00, 0x00,
-		0x46, 0x03, 0x03, 0x00, 0x01, 0x02, 0x03, 0x04,
-		0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
-		0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14
-	};
-
-	sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-	if (sock < 0)
+	if (!response || len < 5)
 		return (false);
 
-	memset(&saddr, 0, sizeof(saddr));
-	saddr.sin_family = AF_INET;
-	saddr.sin_addr = addr;
-	saddr.sin_port = htons(port);
+	/* TLS record types: 0x16=Handshake, 0x17=Application, 0x14=Change, 0x15=Alert */
+	/* Check for TLS ServerHello (0x16 0x03 0x01/0x03) */
+	if (response[0] == 0x16 && response[1] == 0x03 &&
+		(response[2] == 0x01 || response[2] == 0x03))
+		return (true);
 
-	if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0)
-	{
-		close(sock);
-		return (false);
-	}
-
-	/* Send TLS ClientHello */
-	if (send(sock, tls_hello, sizeof(tls_hello), 0) < 0)
-	{
-		close(sock);
-		return (false);
-	}
-
-	/* Wait for TLS ServerHello */
-	tv.tv_sec = 1;
-	tv.tv_usec = 0;
-	FD_ZERO(&rfds);
-	FD_SET(sock, &rfds);
-
-	if (select(sock + 1, &rfds, NULL, NULL, &tv) <= 0)
-	{
-		close(sock);
-		return (false);
-	}
-
-	n = recv(sock, response, sizeof(response), 0);
-	close(sock);
-
-	/* Check for TLS ServerHello (starts with 0x16 0x03) */
-	if (n > 5 && response[0] == 0x16 && response[1] == 0x03)
+	/* Check for TLS Alert (0x15 0x03) */
+	if (response[0] == 0x15 && response[1] == 0x03)
 		return (true);
 
 	return (false);
@@ -475,8 +444,9 @@ int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 	if (n <= 0)
 		return (-1);
 
-	/* Auto-detect service type from response */
+	/* Auto-detect service type from response (includes TLS detection) */
 	detected_service = detect_service_type(response, n);
+
 	if (detected_service)
 	{
 		/* Look up version in signature database */
