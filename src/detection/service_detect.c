@@ -225,6 +225,29 @@ static const t_service_sig	g_service_sigs[] = {
 };
 
 /*
+** Detect TLS/SSL by looking for binary TLS record markers
+** If HTTP GET returns binary data starting with 0x16 0x03 = TLS
+** Returns true if TLS detected, false if plain HTTP or error
+*/
+static bool	detect_tls_by_response(const unsigned char *response, size_t len)
+{
+	if (!response || len < 5)
+		return (false);
+
+	/* TLS record types: 0x16=Handshake, 0x17=Application, 0x14=Change, 0x15=Alert */
+	/* Check for TLS ServerHello (0x16 0x03 0x01/0x03) */
+	if (response[0] == 0x16 && response[1] == 0x03 &&
+		(response[2] == 0x01 || response[2] == 0x03))
+		return (true);
+
+	/* Check for TLS Alert (0x15 0x03) */
+	if (response[0] == 0x15 && response[1] == 0x03)
+		return (true);
+
+	return (false);
+}
+
+/*
 ** Detect service from response heuristics
 */
 static const char	*detect_service_type(const char *response, size_t len)
@@ -274,29 +297,6 @@ static const char	*detect_service_type(const char *response, size_t len)
 		return ("vnc");
 	
 	return (NULL);
-}
-
-/*
-** Detect TLS/SSL by looking for binary TLS record markers
-** If HTTP GET returns binary data starting with 0x16 0x03 = TLS
-** Returns true if TLS detected, false if plain HTTP or error
-*/
-static bool	detect_tls_by_response(const unsigned char *response, size_t len)
-{
-	if (!response || len < 5)
-		return (false);
-
-	/* TLS record types: 0x16=Handshake, 0x17=Application, 0x14=Change, 0x15=Alert */
-	/* Check for TLS ServerHello (0x16 0x03 0x01/0x03) */
-	if (response[0] == 0x16 && response[1] == 0x03 &&
-		(response[2] == 0x01 || response[2] == 0x03))
-		return (true);
-
-	/* Check for TLS Alert (0x15 0x03) */
-	if (response[0] == 0x15 && response[1] == 0x03)
-		return (true);
-
-	return (false);
 }
 
 /*
