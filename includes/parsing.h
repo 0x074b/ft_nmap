@@ -17,6 +17,7 @@ typedef enum e_opt_type
 	OPT_SPEEDUP	= 'S',
 	OPT_SCAN	= 's',
 	OPT_OS		= 'O',
+	OPT_SERVICE	= 'V',
 }	t_opt_type;
 
 /*
@@ -46,6 +47,7 @@ typedef struct s_options
 	int		speedup;
 	bool	scan[SCAN_MAX];
 	bool	os_detection;
+	bool	service_detection;
 }	t_options;
 
 int		parse_opts(int argc, char **argv, t_options *opts);
