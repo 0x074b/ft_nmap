@@ -126,6 +126,32 @@ static void	parse_ssh_banner(const char *banner, char *service_str)
 }
 
 /*
+** Case-insensitive string comparison (portable version)
+*/
+static int	str_ncasecmp(const char *s1, const char *s2, size_t n)
+{
+	unsigned char	c1;
+	unsigned char	c2;
+
+	while (n > 0)
+	{
+		c1 = (unsigned char)tolower(*s1);
+		c2 = (unsigned char)tolower(*s2);
+		
+		if (c1 != c2)
+			return ((int)c1 - (int)c2);
+		
+		if (*s1 == '\0')
+			return (0);
+		
+		s1++;
+		s2++;
+		n--;
+	}
+	return (0);
+}
+
+/*
 ** Case-insensitive string search (portable version)
 */
 static const char	*str_find_case(const char *haystack, const char *needle)
@@ -140,7 +166,7 @@ static const char	*str_find_case(const char *haystack, const char *needle)
 	
 	for (i = 0; haystack[i]; i++)
 	{
-		if (strncasecmp(&haystack[i], needle, len) == 0)
+		if (str_ncasecmp(&haystack[i], needle, len) == 0)
 			return (&haystack[i]);
 	}
 	return (NULL);
