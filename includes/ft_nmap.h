@@ -15,6 +15,18 @@
 # define MAX_TARGETS		256
 # define MAX_DECOYS			16
 
+/*
+** Capture tuning. We only ever parse IP + TCP/UDP (and the ICMP-embedded
+** inner headers), so a 256-byte snaplen captures everything we read. A worker
+** flushes its capture buffer every PROBE_FLUSH_THRESHOLD sends; the kernel
+** buffer is sized for twice that many packets so a reply (or retransmit) burst
+** between flushes cannot overflow it. ~512 B/packet over-estimates the per-
+** frame ring slot at this snaplen, so the byte budget guarantees the count.
+*/
+# define PCAP_SNAPLEN			256
+# define PROBE_FLUSH_THRESHOLD	(1024 * 6)
+# define PCAP_BUFFER_SIZE		(PROBE_FLUSH_THRESHOLD * 2 * 512)
+
 # define IFACE_LEN			64
 # define HOST_LEN			256
 

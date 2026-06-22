@@ -91,9 +91,9 @@ int	main(int argc, char **argv)
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), close(sock), 1);
-	clock_gettime(CLOCK_MONOTONIC, &end_ts);
 	report_results(&opts, results);
 	report_pcap_stats(&stats);
+	clock_gettime(CLOCK_MONOTONIC, &end_ts);
 	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
 		+ (double)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000000.0;
 	printf("Scan completed in %.2f seconds\n", elapsed_s);

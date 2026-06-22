@@ -193,19 +193,18 @@ static void	handle_reply(const t_worker *w, size_t off,
 }
 
 /*
-** Single collection window draining this worker's pcap handle for 1000ms.
-** The BPF filter already narrows to TCP replies destined to any of our
-** source ports, so handle_reply does the per-packet demultiplexing.
+** Final collection window draining this worker's pcap handle for 1000ms,
+** giving late (RTT-delayed) replies time to arrive. The BPF filter already
+** narrows to replies destined to any of our source ports, so handle_reply
+** does the per-packet demultiplexing.
 */
-static void	scan_collect_replies(t_worker *w)
+static void	scan_collect_replies(t_worker *w, size_t off)
 {
 	uint64_t			deadline;
-	size_t				off;
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
 	int					rc;
 
-	off = dl_header_size(pcap_datalink(w->p));
 	deadline = now_ms() + 1000;
 	while (now_ms() < deadline)
 	{
@@ -222,11 +221,37 @@ static void	scan_collect_replies(t_worker *w)
 }
 
 /*
+** Mid-scan flush: drain every reply currently buffered, then return at once.
+** The handle is non-blocking, so pcap_next_ex returning 0 means the buffer is
+** empty. Called between send batches to keep the kernel capture buffer from
+** overflowing without paying the full collection window each time — stragglers
+** still in flight are caught by the next flush or the final window.
+*/
+static void	scan_drain(t_worker *w, size_t off)
+{
+	struct pcap_pkthdr	*hdr;
+	const u_char		*data;
+	int					rc;
+
+	while (1)
+	{
+		rc = pcap_next_ex(w->p, &hdr, &data);
+		if (rc <= 0)
+			break ;
+		handle_reply(w, off, hdr, data);
+	}
+}
+
+/*
 ** Send every probe this worker owns for one target port: for each selected
 ** scan type, mark the slot with that type's no_reply_state and emit the probe
-** (from that type's source port) to every host.
+** (from that type's source port) to every host. *sent tracks probes emitted
+** since the last flush; once it crosses PROBE_FLUSH_THRESHOLD the capture
+** buffer is drained mid-burst and the counter reset. The check lives in the
+** innermost loop so even a single port with a huge host list cannot outrun
+** the kernel buffer.
 */
-static void	send_port_probes(t_worker *w, int port)
+static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 {
 	const t_scan_ops	*ops;
 	size_t				h;
@@ -243,6 +268,11 @@ static void	send_port_probes(t_worker *w, int port)
 				w->results[h][port].state[t] = ops->no_reply_state;
 				ops->send(w->sock, w->src, w->sport[t],
 					w->opts->ips[h].addr, (uint16_t)port);
+				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
+				{
+					scan_drain(w, off);
+					*sent = 0;
+				}
 			}
 		}
 		t++;
@@ -251,20 +281,25 @@ static void	send_port_probes(t_worker *w, int port)
 
 /*
 ** One worker's full pass. It owns every port p where (p - 1) % nthreads == id.
-** It fires all probes for all selected scan types across its whole stride
-** first, then opens a single collection window — so the cost of waiting for
-** replies is paid once for every scan type at once, not once per type.
+** It fires probes across its whole stride, draining the capture buffer every
+** PROBE_FLUSH_THRESHOLD sends (handled inside send_port_probes) so no host-list
+** size can overflow the kernel buffer. A final collection window then catches
+** stragglers still in flight after the last batch.
 */
 void	scan_run(t_worker *w)
 {
-	int	port;
+	size_t	off;
+	size_t	sent;
+	int		port;
 
+	off = dl_header_size(pcap_datalink(w->p));
+	sent = 0;
 	port = w->id + 1;
 	while (port <= MAX_PORTS)
 	{
 		if (w->opts->ports[port])
-			send_port_probes(w, port);
+			send_port_probes(w, port, off, &sent);
 		port += w->nthreads;
 	}
-	scan_collect_replies(w);
+	scan_collect_replies(w, off);
 }

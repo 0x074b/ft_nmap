@@ -27,10 +27,33 @@ static void	build_sport_filter(char *filter, size_t size,
 }
 
 /*
-** Open a live capture handle on iface, non-promiscuous, and install a BPF
-** filter narrowing to TCP replies destined to our source ports. Returns NULL
-** on error (message printed to stderr).
+** Create and activate a capture handle on iface, non-promiscuous, with a small
+** snaplen and an enlarged kernel buffer (see PCAP_* in ft_nmap.h). The
+** create/activate flow — rather than pcap_open_live — is what lets us set the
+** buffer size before the handle goes live. Returns NULL on error (message
+** printed to stderr).
 */
+static pcap_t	*create_handle(const char *iface)
+{
+	char	errbuf[PCAP_ERRBUF_SIZE];
+	pcap_t	*p;
+
+	p = pcap_create(iface, errbuf);
+	if (!p)
+		return (fprintf(stderr, "Error: pcap_create: %s\n", errbuf), NULL);
+	pcap_set_snaplen(p, PCAP_SNAPLEN);
+	pcap_set_promisc(p, 0);
+	pcap_set_timeout(p, 10);
+	pcap_set_buffer_size(p, PCAP_BUFFER_SIZE);
+	if (pcap_activate(p) < 0)
+	{
+		fprintf(stderr, "Error: pcap_activate: %s\n", pcap_geterr(p));
+		pcap_close(p);
+		return (NULL);
+	}
+	return (p);
+}
+
 pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
 		int count, int udp)
 {
@@ -39,9 +62,9 @@ pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
 	char				filter[256];
 	pcap_t				*p;
 
-	p = pcap_open_live(iface, 65535, 0, 10, errbuf);
+	p = create_handle(iface);
 	if (!p)
-		return (fprintf(stderr, "Error: pcap_open_live: %s\n", errbuf), NULL);
+		return (NULL);
 	build_sport_filter(filter, sizeof(filter), sports, count, udp);
 	if (pcap_compile(p, &fp, filter, 1, PCAP_NETMASK_UNKNOWN) < 0)
 	{
