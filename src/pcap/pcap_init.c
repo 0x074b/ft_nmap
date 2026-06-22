@@ -4,17 +4,21 @@
 #include "ft_nmap.h"
 
 /*
-** Build a BPF expression matching TCP replies destined to any of our source
-** ports: "tcp and (dst port A or dst port B ...)". One sport per selected
-** scan type lets the collector tell the scan types' replies apart.
+** Build a BPF expression matching replies destined to any of our source
+** ports. When UDP scanning is enabled, also capture ICMP so UDP port
+** unreachable responses can be classified.
 */
 static void	build_sport_filter(char *filter, size_t size,
-		const uint16_t *sports, int count)
+		const uint16_t *sports, int count, bool udp)
 {
 	size_t	off;
 	int		i;
 
-	off = (size_t)snprintf(filter, size, "tcp and (");
+	if (udp)
+		off = (size_t)snprintf(filter, size,
+			"icmp or ((tcp or udp) and (");
+	else
+		off = (size_t)snprintf(filter, size, "tcp and (");
 	i = 0;
 	while (i < count)
 	{
@@ -22,7 +26,10 @@ static void	build_sport_filter(char *filter, size_t size,
 				i ? " or " : "", sports[i]);
 		i++;
 	}
-	snprintf(filter + off, size - off, ")");
+	if (udp)
+		snprintf(filter + off, size - off, "))";
+	else
+		snprintf(filter + off, size - off, ")");
 }
 
 /*
@@ -31,7 +38,7 @@ static void	build_sport_filter(char *filter, size_t size,
 ** on error (message printed to stderr).
 */
 pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
-		int count)
+		int count, bool udp)
 {
 	char				errbuf[PCAP_ERRBUF_SIZE];
 	struct bpf_program	fp;
@@ -41,7 +48,7 @@ pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
 	p = pcap_open_live(iface, 65535, 0, 10, errbuf);
 	if (!p)
 		return (fprintf(stderr, "Error: pcap_open_live: %s\n", errbuf), NULL);
-	build_sport_filter(filter, sizeof(filter), sports, count);
+	build_sport_filter(filter, sizeof(filter), sports, count, udp);
 	if (pcap_compile(p, &fp, filter, 1, PCAP_NETMASK_UNKNOWN) < 0)
 	{
 		fprintf(stderr, "Error: pcap_compile: %s\n", pcap_geterr(p));

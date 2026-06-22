@@ -12,7 +12,7 @@ static int	open_raw_socket(void)
 	int	sock;
 	int	on;
 
-	sock = socket(AF_INET, SOCK_RAW, IPPROTO_TCP);
+	sock = socket(AF_INET, SOCK_RAW, IPPROTO_RAW);
 	if (sock < 0)
 	{
 		perror("socket");

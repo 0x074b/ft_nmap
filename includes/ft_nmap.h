@@ -172,14 +172,12 @@ void	build_tcp_hdr(struct tcphdr *tcph, struct in_addr src,
 			t_scan_type type);
 size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 			uint16_t sport, uint16_t dport, t_scan_type type);
-
-	/* pcap/ */
-pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
-			int count);
-
-	/* report/ */
-const char	*port_state_name(t_port_state s);
-const char	*scan_type_name(t_scan_type type);
+void	build_udp_hdr(struct udphdr *udph, struct in_addr src,
+		struct in_addr dst, uint16_t sport, uint16_t dport,
+		const uint8_t *payload, size_t payload_len);
+size_t	build_udp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
+		uint16_t sport, uint16_t dport,
+		const uint8_t *payload, size_t payload_len);
 
 # include "parsing.h"
 

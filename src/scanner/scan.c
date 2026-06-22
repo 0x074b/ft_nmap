@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#include <netinet/ip_icmp.h>
 
 #include "scanner_internal.h"
 
