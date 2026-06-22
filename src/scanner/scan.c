@@ -3,6 +3,7 @@
 #include <unistd.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#include <netinet/ip_icmp.h>
 
 #include "scanner_internal.h"
 
@@ -15,10 +16,10 @@
 static const t_scan_ops	g_scan_ops[SCAN_MAX] = {
 	[SCAN_SYN] = {syn_send, syn_recv, PORT_FILTERED, "SYN"},
 	[SCAN_ACK] = {ack_send, ack_recv, PORT_FILTERED, "ACK"},
-	[SCAN_FIN] = {fin_send, fin_recv, PORT_UNKNOWN, "FIN"},
-	[SCAN_NULL] = {null_send, null_recv, PORT_UNKNOWN, "NULL"},
-	[SCAN_XMAS] = {xmas_send, xmas_recv, PORT_UNKNOWN, "XMAS"},
-	[SCAN_UDP] = {udp_send, udp_recv, PORT_UNKNOWN, "UDP"},
+	[SCAN_FIN] = {fin_send, fin_recv, PORT_OPEN_FILTERED, "FIN"},
+	[SCAN_NULL] = {null_send, null_recv, PORT_OPEN_FILTERED, "NULL"},
+	[SCAN_XMAS] = {xmas_send, xmas_recv, PORT_OPEN_FILTERED, "XMAS"},
+	[SCAN_UDP] = {udp_send, udp_recv, PORT_OPEN_FILTERED, "UDP"},
 };
 
 const t_scan_ops	*scan_ops(t_scan_type type)
@@ -117,29 +118,78 @@ static void	handle_reply(const t_worker *w, size_t off,
 {
 	const struct iphdr	*iph;
 	const struct tcphdr	*tcph;
+	const struct udphdr	*udph;
+	const struct icmphdr	*icmph;
+	const struct iphdr	*inner_iph;
+	const struct udphdr	*inner_udph;
 	t_port_state		s;
-	int					h;
-	int					t;
-	uint16_t			port;
+	int				h;
+	int				t;
+	uint16_t		port;
+	size_t			iph_len;
 
-	if (hdr->caplen < off + sizeof(*iph) + sizeof(*tcph))
+	if (hdr->caplen < off + sizeof(*iph))
 		return ;
 	iph = (const struct iphdr *)(data + off);
-	if (iph->protocol != IPPROTO_TCP)
-		return ;
 	h = find_host_idx(w->opts, iph->saddr);
 	if (h < 0)
 		return ;
-	tcph = (const struct tcphdr *)((const uint8_t *)iph + iph->ihl * 4);
-	t = type_for_sport(w, ntohs(tcph->dest));
-	if (t < 0)
+	iph_len = iph->ihl * 4;
+	if (iph->protocol == IPPROTO_TCP)
+	{
+		if (hdr->caplen < off + iph_len + sizeof(*tcph))
+			return ;
+		tcph = (const struct tcphdr *)((const uint8_t *)iph + iph_len);
+		t = type_for_sport(w, ntohs(tcph->dest));
+		if (t < 0)
+			return ;
+		port = ntohs(tcph->source);
+		if (port > MAX_PORTS || !w->opts->ports[port])
+			return ;
+		s = scan_ops(t)->classify(tcph);
+		if (s != PORT_UNKNOWN)
+			w->results[h][port].state[t] = s;
 		return ;
-	port = ntohs(tcph->source);
-	if (port > MAX_PORTS || !w->opts->ports[port])
+	}
+	if (iph->protocol == IPPROTO_UDP)
+	{
+		if (hdr->caplen < off + iph_len + sizeof(*udph))
+			return ;
+		udph = (const struct udphdr *)((const uint8_t *)iph + iph_len);
+		t = type_for_sport(w, ntohs(udph->dest));
+		if (t != SCAN_UDP)
+			return ;
+		port = ntohs(udph->source);
+		if (port > MAX_PORTS || !w->opts->ports[port])
+			return ;
+		w->results[h][port].state[t] = PORT_OPEN;
 		return ;
-	s = scan_ops(t)->classify(tcph);
-	if (s != PORT_UNKNOWN)
+	}
+	if (iph->protocol == IPPROTO_ICMP)
+	{
+		if (hdr->caplen < off + iph_len + sizeof(*icmph))
+			return ;
+		icmph = (const struct icmphdr *)((const uint8_t *)iph + iph_len);
+		if (icmph->type != ICMP_DEST_UNREACH)
+			return ;
+		if (hdr->caplen < off + iph_len + sizeof(*icmph) + sizeof(*inner_iph))
+			return ;
+		inner_iph = (const struct iphdr *)((const uint8_t *)icmph + sizeof(*icmph));
+		if (inner_iph->protocol != IPPROTO_UDP)
+			return ;
+		inner_udph = (const struct udphdr *)((const uint8_t *)inner_iph + inner_iph->ihl * 4);
+		t = type_for_sport(w, ntohs(inner_udph->source));
+		if (t != SCAN_UDP)
+			return ;
+		port = ntohs(inner_udph->dest);
+		if (port > MAX_PORTS || !w->opts->ports[port])
+			return ;
+		if (icmph->code == ICMP_PORT_UNREACH)
+			s = PORT_CLOSED;
+		else
+			s = PORT_FILTERED;
 		w->results[h][port].state[t] = s;
+	}
 }
 
 /*

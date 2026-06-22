@@ -116,7 +116,55 @@ void	build_tcp_hdr(struct tcphdr *tcph, struct in_addr src,
 ** Build an IPv4 + TCP probe for the given scan type into buf. Returns the
 ** total length. Caller must provide at least sizeof(iphdr)+sizeof(tcphdr) =
 ** 40 bytes.
-*/
+*/static uint16_t	udp_checksum(const struct udphdr *udph,
+		struct in_addr src, struct in_addr dst,
+		const uint8_t *payload, size_t payload_len)
+{
+	struct s_pseudo	ph;
+	uint8_t		pseudo[sizeof(ph) + sizeof(*udph) + payload_len];
+
+	ph.saddr = src.s_addr;
+	ph.daddr = dst.s_addr;
+	ph.zero = 0;
+	ph.protocol = IPPROTO_UDP;
+	ph.len = htons((uint16_t)(sizeof(*udph) + payload_len));
+	memcpy(pseudo, &ph, sizeof(ph));
+	memcpy(pseudo + sizeof(ph), udph, sizeof(*udph));
+	if (payload_len)
+		memcpy(pseudo + sizeof(ph) + sizeof(*udph), payload, payload_len);
+	return (in_cksum(pseudo, sizeof(pseudo)));
+}
+
+void	build_udp_hdr(struct udphdr *udph, struct in_addr src,
+		struct in_addr dst, uint16_t sport, uint16_t dport,
+		const uint8_t *payload, size_t payload_len)
+{
+	udph->source = htons(sport);
+	udph->dest = htons(dport);
+	udph->len = htons((uint16_t)(sizeof(*udph) + payload_len));
+	udph->check = 0;
+	udph->check = udp_checksum(udph, src, dst, payload, payload_len);
+}
+
+size_t	build_udp_packet(uint8_t *buf, struct in_addr src,
+		struct in_addr dst, uint16_t sport, uint16_t dport,
+		const uint8_t *payload, size_t payload_len)
+{
+	struct iphdr	*iph;
+	struct udphdr	*udph;
+	size_t		total;
+
+	total = sizeof(*iph) + sizeof(*udph) + payload_len;
+	memset(buf, 0, total);
+	iph = (struct iphdr *)buf;
+	udph = (struct udphdr *)(buf + sizeof(*iph));
+	build_ip_hdr(iph, src, dst, IPPROTO_UDP,
+		(uint16_t)(sizeof(*udph) + payload_len));
+	build_udp_hdr(udph, src, dst, sport, dport, payload, payload_len);
+	if (payload_len)
+		memcpy((uint8_t *)udph + sizeof(*udph), payload, payload_len);
+	return (total);
+}
 size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 		uint16_t sport, uint16_t dport, t_scan_type type)
 {

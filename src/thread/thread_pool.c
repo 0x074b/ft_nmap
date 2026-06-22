@@ -103,7 +103,8 @@ static int	open_worker_handles(t_worker *workers, int n, const char *iface)
 	while (i < n)
 	{
 		count = worker_sports(&workers[i], sports);
-		workers[i].p = pcap_open_for_scan(iface, sports, count);
+		workers[i].p = pcap_open_for_scan(iface, sports, count,
+			workers[i].opts->scan[SCAN_UDP] ? 1 : 0);
 		if (!workers[i].p)
 		{
 			while (--i >= 0)
