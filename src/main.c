@@ -88,10 +88,27 @@ int	main(int argc, char **argv)
 		return (close(sock), 1);
 	stats = (t_pcap_stats){0, 0};
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
+	
+	/* Initialize OS detection if enabled */
+	if (opts.os_detection)
+		os_detect_init();
+	
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), close(sock), 1);
 	clock_gettime(CLOCK_MONOTONIC, &end_ts);
+	
+	/* Run OS detection analysis if enabled */
+	if (opts.os_detection)
+		os_detect_analyze(results, opts.ip_count);
+	
+	/* Run service detection on open ports if enabled */
+	if (opts.service_detection)
+	{
+		printf("\nDetecting services...\n");
+		service_detect_analyze(&opts, results);
+	}
+	
 	report_results(&opts, results);
 	report_pcap_stats(&stats);
 	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
