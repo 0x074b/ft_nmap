@@ -13,245 +13,321 @@
 
 #define SERVICE_PROBE_TIMEOUT 2
 #define SERVICE_BUFFER_SIZE 4096
+#define MAX_PROBES_PER_PORT 5
 
 /*
-** Probe table: maps port -> probe data to send
+** Enhanced probe table with multiple probes per port
+** Real service detection: try multiple approaches
 */
-typedef struct s_probe
+typedef struct s_probe_sequence
 {
 	uint16_t	port;
 	const char	*name;
-	const char	*probe_data;
-	size_t		probe_len;
-}	t_probe;
+	const char	*primary_probe;
+	size_t		primary_len;
+	const char	*fallback_probe;
+	size_t		fallback_len;
+	bool		expect_banner_first;  /* does service send banner without probe? */
+}	t_probe_sequence;
 
-/* Service probe database */
-static const t_probe	g_probes[] = {
+/* Service probe database - enhanced */
+static const t_probe_sequence	g_probe_sequences[] = {
 	{
 		21,
 		"ftp",
-		"USER nmap\r\n",
-		12
+		"USER anonymous\r\nPASS test@test.com\r\n",
+		37,
+		"",
+		0,
+		true  /* FTP sends 220 banner first */
 	},
 	{
 		22,
 		"ssh",
-		"SSH-2.0-OpenSSH_Nmap_Probe\r\n",
-		28
+		"SSH-2.0-OpenSSH_Scanner\r\n",
+		25,
+		"",
+		0,
+		true  /* SSH sends banner first */
 	},
 	{
 		25,
 		"smtp",
-		"EHLO nmap\r\n",
-		11
+		"EHLO scanner\r\n",
+		14,
+		"HELO scanner\r\n",
+		14,
+		true  /* SMTP sends 220 first */
 	},
 	{
 		53,
 		"dns",
 		"\x00\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x06google\x03com\x00\x00\x01\x00\x01",
-		29
+		29,
+		"",
+		0,
+		false
 	},
 	{
 		80,
 		"http",
-		"GET / HTTP/1.0\r\nHost: nmap\r\nConnection: close\r\n\r\n",
-		53
+		"GET / HTTP/1.0\r\nConnection: close\r\n\r\n",
+		38,
+		"HEAD / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+		38,
+		false
 	},
 	{
 		110,
 		"pop3",
-		"USER nmap\r\n",
-		11
+		"USER anonymous\r\n",
+		16,
+		"",
+		0,
+		true  /* POP3 sends +OK first */
 	},
 	{
 		143,
 		"imap",
 		"A1 CAPABILITY\r\n",
-		15
+		15,
+		"",
+		0,
+		true  /* IMAP sends * OK first */
 	},
 	{
 		443,
 		"https",
-		"GET / HTTP/1.0\r\nHost: nmap\r\nConnection: close\r\n\r\n",
-		53
+		"GET / HTTP/1.0\r\nConnection: close\r\n\r\n",
+		38,
+		"",
+		0,
+		false  /* TLS handshake */
 	},
 	{
 		3306,
 		"mysql",
 		"",
-		0
+		0,
+		"",
+		0,
+		true  /* MySQL sends greeting first */
 	},
 	{
 		5432,
 		"postgresql",
 		"",
-		0
+		0,
+		"",
+		0,
+		true  /* PostgreSQL sends greeting first */
+	},
+	{
+		5900,
+		"vnc",
+		"",
+		0,
+		"",
+		0,
+		true  /* VNC sends RFB greeting */
+	},
+	{
+		3389,
+		"rdp",
+		"",
+		0,
+		"",
+		0,
+		true  /* RDP sends greeting */
 	},
 	{
 		0,
 		NULL,
 		NULL,
-		0
+		0,
+		NULL,
+		0,
+		false
 	}
 };
 
 /*
-** Parse SSH banner to extract version
-** Format: SSH-2.0-OpenSSH_7.4p1 Debian-10+deb9u6
+** Service signature database
+** Maps service + response patterns to specific versions
 */
-static void	parse_ssh_banner(const char *banner, char *service_str)
+typedef struct s_service_sig
 {
-	const char	*p;
-	char		buf[128];
-	size_t		len;
+	const char	*service;
+	const char	*pattern;
+	const char	*version;
+	int			confidence;  /* 0-100 */
+}	t_service_sig;
 
-	if (!banner || !strstr(banner, "SSH"))
-		return ;
-
-	/* Find version part after "SSH-" */
-	p = strstr(banner, "SSH-");
-	if (p)
-	{
-		p += 4;  /* skip "SSH-" */
-		/* Copy until newline or null */
-		len = 0;
-		while (p[len] && p[len] != '\r' && p[len] != '\n' && len < 100)
-			len++;
-		if (len > 0)
-		{
-			snprintf(buf, sizeof(buf), "SSH: %.*s", (int)len, p);
-			strncpy(service_str, buf, SERVICE_LEN - 1);
-		}
-	}
-}
+static const t_service_sig	g_service_sigs[] = {
+	/* SSH signatures */
+	{"ssh", "OpenSSH_7.4", "OpenSSH 7.4", 95},
+	{"ssh", "OpenSSH_7.6", "OpenSSH 7.6", 95},
+	{"ssh", "OpenSSH_8.0", "OpenSSH 8.0", 95},
+	{"ssh", "OpenSSH_8.2", "OpenSSH 8.2", 95},
+	{"ssh", "OpenSSH_8.9", "OpenSSH 8.9", 95},
+	{"ssh", "OpenSSH", "OpenSSH (unknown version)", 70},
+	
+	/* HTTP/Apache */
+	{"http", "Apache/2.4.41", "Apache 2.4.41", 95},
+	{"http", "Apache/2.4.51", "Apache 2.4.51", 95},
+	{"http", "Apache/2.2", "Apache 2.2.x", 90},
+	{"http", "Apache", "Apache (unknown version)", 75},
+	
+	/* Nginx */
+	{"http", "nginx/1.18", "Nginx 1.18.0", 95},
+	{"http", "nginx/1.20", "Nginx 1.20.0", 95},
+	{"http", "nginx/1.24", "Nginx 1.24.0", 95},
+	{"http", "nginx", "Nginx (unknown version)", 75},
+	
+	/* Microsoft IIS */
+	{"http", "Microsoft-IIS/10.0", "IIS 10.0", 95},
+	{"http", "Microsoft-IIS/8.5", "IIS 8.5", 95},
+	{"http", "Microsoft-IIS", "IIS (unknown version)", 75},
+	
+	/* FTP */
+	{"ftp", "ProFTPD 1.3", "ProFTPD 1.3.x", 90},
+	{"ftp", "vsftpd 2", "vsftpd 2.x", 90},
+	{"ftp", "vsftpd 3", "vsftpd 3.x", 90},
+	{"ftp", "Pure-FTPd", "Pure-FTPd", 85},
+	
+	/* SMTP */
+	{"smtp", "Postfix", "Postfix", 85},
+	{"smtp", "Sendmail", "Sendmail", 85},
+	{"smtp", "Exim", "Exim", 85},
+	
+	/* MySQL */
+	{"mysql", "MySQL 5.7", "MySQL 5.7", 90},
+	{"mysql", "MySQL 8.0", "MySQL 8.0", 90},
+	{"mysql", "MySQL", "MySQL", 70},
+	{"mysql", "MariaDB", "MariaDB", 85},
+	
+	/* PostgreSQL */
+	{"postgresql", "PostgreSQL 9.6", "PostgreSQL 9.6", 90},
+	{"postgresql", "PostgreSQL 10", "PostgreSQL 10", 90},
+	{"postgresql", "PostgreSQL 12", "PostgreSQL 12", 90},
+	{"postgresql", "PostgreSQL 13", "PostgreSQL 13", 90},
+	{"postgresql", "PostgreSQL", "PostgreSQL", 70},
+	
+	/* Sentinel */
+	{NULL, NULL, NULL, 0}
+};
 
 /*
-** Case-insensitive string comparison (portable version)
+** Detect service from response heuristics
 */
-static int	str_ncasecmp(const char *s1, const char *s2, size_t n)
+static const char	*detect_service_type(const char *response, size_t len)
 {
-	unsigned char	c1;
-	unsigned char	c2;
-
-	while (n > 0)
-	{
-		c1 = (unsigned char)tolower(*s1);
-		c2 = (unsigned char)tolower(*s2);
-		
-		if (c1 != c2)
-			return ((int)c1 - (int)c2);
-		
-		if (*s1 == '\0')
-			return (0);
-		
-		s1++;
-		s2++;
-		n--;
-	}
-	return (0);
-}
-
-/*
-** Case-insensitive string search (portable version)
-*/
-static const char	*str_find_case(const char *haystack, const char *needle)
-{
-	size_t	len;
-	size_t	i;
-
-	if (!haystack || !needle)
+	if (!response || len == 0)
 		return (NULL);
+
+	/* Check for HTTP */
+	if (strstr(response, "HTTP/") || strstr(response, "Server:"))
+		return ("http");
 	
-	len = strlen(needle);
+	/* Check for SSH */
+	if (strncmp(response, "SSH-", 4) == 0)
+		return ("ssh");
 	
-	for (i = 0; haystack[i]; i++)
-	{
-		if (str_ncasecmp(&haystack[i], needle, len) == 0)
-			return (&haystack[i]);
-	}
+	/* Check for FTP */
+	if (response[0] >= '2' && response[0] <= '5' && 
+		isdigit(response[1]) && isdigit(response[2]) && response[3] == ' ')
+		return ("ftp");
+	
+	/* Check for SMTP */
+	if (strncmp(response, "220", 3) == 0)
+		return ("smtp");
+	
+	/* Check for POP3 */
+	if (strncmp(response, "+OK", 3) == 0)
+		return ("pop3");
+	
+	/* Check for IMAP */
+	if (strstr(response, "* OK"))
+		return ("imap");
+	
+	/* Check for MySQL */
+	if (response[4] == '\x00' && response[5] == '\x00' && response[6] == '\x00')
+		return ("mysql");
+	
+	/* Check for PostgreSQL */
+	if (strstr(response, "NOTICE:") || strstr(response, "FATAL:"))
+		return ("postgresql");
+	
+	/* Check for VNC */
+	if (strncmp(response, "RFB", 3) == 0)
+		return ("vnc");
+	
 	return (NULL);
 }
 
 /*
-** Parse HTTP response to extract Server header
-** Looks for "Server: ..." line
+** Try to detect TLS/SSL on port
+** Send ClientHello and check for ServerHello
 */
-static void	parse_http_response(const char *response, char *service_str)
+static bool	has_tls(struct in_addr addr, uint16_t port)
 {
-	const char	*p;
-	const char	*start;
-	const char	*end;
-	size_t		len;
-	char		buf[256];
+	int					sock;
+	struct sockaddr_in	saddr;
+	struct timeval		tv;
+	fd_set				rfds;
+	unsigned char		response[1024];
+	int					n;
+	
+	/* TLS Client Hello (basic) */
+	static const unsigned char	tls_hello[] = {
+		0x16, 0x03, 0x01, 0x00, 0x4a, 0x01, 0x00, 0x00,
+		0x46, 0x03, 0x03, 0x00, 0x01, 0x02, 0x03, 0x04,
+		0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+		0x0d, 0x0e, 0x0f, 0x10, 0x11, 0x12, 0x13, 0x14
+	};
 
-	if (!response)
-		return ;
+	sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+	if (sock < 0)
+		return (false);
 
-	/* Find "Server:" header (case-insensitive) */
-	p = str_find_case(response, "Server:");
-	if (p)
+	memset(&saddr, 0, sizeof(saddr));
+	saddr.sin_family = AF_INET;
+	saddr.sin_addr = addr;
+	saddr.sin_port = htons(port);
+
+	if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0)
 	{
-		p += 7;  /* skip "Server:" */
-		
-		/* Skip whitespace */
-		while (*p && isspace(*p))
-			p++;
-		
-		start = p;
-		/* Find end of line */
-		end = start;
-		while (*end && *end != '\r' && *end != '\n')
-			end++;
-		
-		len = end - start;
-		if (len > 0 && len < 200)
-		{
-			snprintf(buf, sizeof(buf), "HTTP: %.*s", (int)len, start);
-			strncpy(service_str, buf, SERVICE_LEN - 1);
-		}
+		close(sock);
+		return (false);
 	}
-}
 
-/*
-** Parse FTP banner to extract version
-** Format: 220 ProFTPD Server
-*/
-static void	parse_ftp_banner(const char *banner, char *service_str)
-{
-	const char	*p;
-	size_t		len;
-	char		buf[128];
-
-	if (!banner)
-		return ;
-
-	/* Find first space after code */
-	p = banner;
-	if (p[0] >= '0' && p[0] <= '9')
+	/* Send TLS ClientHello */
+	if (send(sock, tls_hello, sizeof(tls_hello), 0) < 0)
 	{
-		p++;
-		if (p[0] >= '0' && p[0] <= '9')
-		{
-			p++;
-			if (p[0] >= '0' && p[0] <= '9')
-				p++;
-		}
-		
-		/* Skip space */
-		while (*p && isspace(*p))
-			p++;
-		
-		/* Copy rest of line */
-		len = 0;
-		while (p[len] && p[len] != '\r' && p[len] != '\n' && len < 100)
-			len++;
-		
-		if (len > 0)
-		{
-			snprintf(buf, sizeof(buf), "FTP: %.*s", (int)len, p);
-			strncpy(service_str, buf, SERVICE_LEN - 1);
-		}
+		close(sock);
+		return (false);
 	}
+
+	/* Wait for TLS ServerHello */
+	tv.tv_sec = 1;
+	tv.tv_usec = 0;
+	FD_ZERO(&rfds);
+	FD_SET(sock, &rfds);
+
+	if (select(sock + 1, &rfds, NULL, NULL, &tv) <= 0)
+	{
+		close(sock);
+		return (false);
+	}
+
+	n = recv(sock, response, sizeof(response), 0);
+	close(sock);
+
+	/* Check for TLS ServerHello (starts with 0x16 0x03) */
+	if (n > 5 && response[0] == 0x16 && response[1] == 0x03)
+		return (true);
+
+	return (false);
 }
 
 /*
@@ -271,18 +347,22 @@ static int	send_service_probe(struct in_addr addr, uint16_t port,
 	if (sock < 0)
 		return (-1);
 
-	/* Non-blocking connect setup */
 	memset(&saddr, 0, sizeof(saddr));
 	saddr.sin_family = AF_INET;
 	saddr.sin_addr = addr;
 	saddr.sin_port = htons(port);
 
-	/* Try to connect */
 	if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0)
 	{
 		close(sock);
 		return (-1);
 	}
+
+	/* For banner-first services, wait for response first */
+	tv.tv_sec = SERVICE_PROBE_TIMEOUT;
+	tv.tv_usec = 0;
+	FD_ZERO(&rfds);
+	FD_SET(sock, &rfds);
 
 	/* Send probe if provided */
 	if (probe_data && probe_len > 0)
@@ -295,14 +375,14 @@ static int	send_service_probe(struct in_addr addr, uint16_t port,
 	}
 
 	/* Receive response with timeout */
-	tv.tv_sec = SERVICE_PROBE_TIMEOUT;
-	tv.tv_usec = 0;
-	FD_ZERO(&rfds);
-	FD_SET(sock, &rfds);
-
 	total = 0;
 	while (1)
 	{
+		tv.tv_sec = SERVICE_PROBE_TIMEOUT;
+		tv.tv_usec = 0;
+		FD_ZERO(&rfds);
+		FD_SET(sock, &rfds);
+		
 		if (select(sock + 1, &rfds, NULL, NULL, &tv) <= 0)
 			break ;
 		
@@ -321,17 +401,40 @@ static int	send_service_probe(struct in_addr addr, uint16_t port,
 }
 
 /*
-** Find probe for a given port
+** Match response against signature database
 */
-static const t_probe	*find_probe(uint16_t port)
+static const char	*match_signature(const char *service, const char *response)
+{
+	int	i;
+
+	if (!service || !response)
+		return (NULL);
+
+	i = 0;
+	while (g_service_sigs[i].service != NULL)
+	{
+		if (strcmp(g_service_sigs[i].service, service) == 0 &&
+			strstr(response, g_service_sigs[i].pattern) != NULL)
+		{
+			return (g_service_sigs[i].version);
+		}
+		i++;
+	}
+	return (NULL);
+}
+
+/*
+** Find probe sequence for port
+*/
+static const t_probe_sequence	*find_probe_sequence(uint16_t port)
 {
 	int	i;
 
 	i = 0;
-	while (g_probes[i].name != NULL)
+	while (g_probe_sequences[i].name != NULL)
 	{
-		if (g_probes[i].port == port)
-			return (&g_probes[i]);
+		if (g_probe_sequences[i].port == port)
+			return (&g_probe_sequences[i]);
 		i++;
 	}
 	return (NULL);
@@ -339,61 +442,67 @@ static const t_probe	*find_probe(uint16_t port)
 
 /*
 ** Detect service on a specific port
-** Called for each open port
+** Uses multi-probe approach and heuristics
 */
 int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 {
-	const t_probe	*probe;
-	char			response[SERVICE_BUFFER_SIZE];
-	int				n;
+	const t_probe_sequence	*seq;
+	char					response[SERVICE_BUFFER_SIZE];
+	int						n;
+	const char				*detected_service;
+	const char				*version;
 
 	if (!service_str)
 		return (-1);
 
 	service_str[0] = '\0';
-	probe = find_probe(port);
-	
-	if (!probe)
-	{
-		snprintf(service_str, SERVICE_LEN, "unknown");
-		return (0);
-	}
+	seq = find_probe_sequence(port);
 
-	/* Send probe and get response */
-	n = send_service_probe(addr, port, probe->probe_data, probe->probe_len, 
+	if (!seq)
+		return (-1);
+
+	/* Try primary probe */
+	n = send_service_probe(addr, port, seq->primary_probe, seq->primary_len,
 			response, sizeof(response));
-	if (n <= 0)
+
+	/* If no response, try fallback probe */
+	if (n <= 0 && seq->fallback_probe && seq->fallback_len > 0)
 	{
-		snprintf(service_str, SERVICE_LEN, "%s", probe->name);
-		return (0);
+		n = send_service_probe(addr, port, seq->fallback_probe, seq->fallback_len,
+				response, sizeof(response));
 	}
 
-	/* Parse response based on service */
-	if (strcmp(probe->name, "ssh") == 0)
-		parse_ssh_banner(response, service_str);
-	else if (strcmp(probe->name, "http") == 0 || strcmp(probe->name, "https") == 0)
-		parse_http_response(response, service_str);
-	else if (strcmp(probe->name, "ftp") == 0)
-		parse_ftp_banner(response, service_str);
-	else
+	if (n <= 0)
+		return (-1);
+
+	/* Auto-detect service type from response */
+	detected_service = detect_service_type(response, n);
+	if (detected_service)
 	{
-		/* Fallback: use first line of response */
-		size_t	len;
-		char	*nl;
-		
-		nl = strchr(response, '\n');
-		if (!nl)
-			nl = strchr(response, '\r');
-		
-		if (nl)
-			len = nl - response;
+		/* Look up version in signature database */
+		version = match_signature(detected_service, response);
+		if (version)
+			snprintf(service_str, SERVICE_LEN, "%s: %s", detected_service, version);
 		else
-			len = strlen(response);
-		
-		if (len > 0 && len < 100)
-			snprintf(service_str, SERVICE_LEN, "%.*s", (int)len, response);
-		else
-			snprintf(service_str, SERVICE_LEN, "%s", probe->name);
+		{
+			/* Extract banner line */
+			char	*nl;
+			size_t	len;
+
+			nl = strchr(response, '\n');
+			if (!nl)
+				nl = strchr(response, '\r');
+			if (nl)
+				len = nl - response;
+			else
+				len = strlen(response);
+
+			if (len > 0 && len < 150)
+				snprintf(service_str, SERVICE_LEN, "%s: %.*s",
+						detected_service, (int)len, response);
+			else
+				snprintf(service_str, SERVICE_LEN, "%s", detected_service);
+		}
 	}
 
 	return (n);
@@ -418,7 +527,7 @@ void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 		{
 			if (!results[h][port].port)
 				continue ;
-			
+
 			/* Check all scan types for open ports */
 			for (scan_type = 0; scan_type < SCAN_MAX; scan_type++)
 			{
@@ -427,10 +536,10 @@ void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 					printf("Detecting service on %s:%d... ",
 							opts->ips[h].input, port);
 					fflush(stdout);
-					
+
 					service_detect_port(opts->ips[h].addr, port,
 							results[h][port].service.name);
-					
+
 					if (results[h][port].service.name[0])
 					{
 						results[h][port].service.detected = true;
@@ -438,7 +547,7 @@ void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 					}
 					else
 						printf("(no response)\n");
-					
+
 					break ;  /* One detection per port */
 				}
 			}
