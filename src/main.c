@@ -102,6 +102,10 @@ int	main(int argc, char **argv)
 	if (opts.os_detection)
 		os_detect_analyze(results, opts.ip_count);
 	
+	/* Run service detection on open ports */
+	printf("\nDetecting services...\n");
+	service_detect_analyze(&opts, results);
+	
 	report_results(&opts, results);
 	report_pcap_stats(&stats);
 	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
