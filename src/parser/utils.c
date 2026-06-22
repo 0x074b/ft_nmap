@@ -240,3 +240,79 @@ int	set_scan(t_options *opts, const char *arg)
 	}
 	return (0);
 }
+
+/*
+** Timing template: -T0 (paranoid) through -T5 (insane)
+** Maps to timeout intervals: 0(5min), 1(15min), 2(15s), 3(0ms), 4(0ms), 5(0ms)
+*/
+int	set_timing(t_options *opts, const char *arg)
+{
+	long	n;
+	char	*end;
+
+	errno = 0;
+	n = strtol(arg, &end, 10);
+	if (errno != 0 || end == arg || *end != '\0' || n < 0 || n > 5)
+		return (fprintf(stderr,
+				"Error: timing must be 0-5 (got '%s')\n", arg), -1);
+	opts->timing_level = (int)n;
+	return (0);
+}
+
+/*
+** Parse MAC address in format AA:BB:CC:DD:EE:FF
+*/
+int	set_spoof_mac(t_options *opts, const char *arg)
+{
+	unsigned int	bytes[6];
+	int				i;
+
+	if (sscanf(arg, "%x:%x:%x:%x:%x:%x",
+		&bytes[0], &bytes[1], &bytes[2],
+		&bytes[3], &bytes[4], &bytes[5]) != 6)
+		return (fprintf(stderr,
+				"Error: invalid MAC format (use AA:BB:CC:DD:EE:FF)\n"), -1);
+	for (i = 0; i < 6; i++)
+	{
+		if (bytes[i] > 255)
+			return (fprintf(stderr, "Error: invalid MAC byte value\n"), -1);
+		opts->spoof_mac[i] = (uint8_t)bytes[i];
+	}
+	opts->spoof_mac_set = true;
+	return (0);
+}
+
+/*
+** Parse comma-separated list of decoy IPs
+*/
+int	set_decoys(t_options *opts, const char *arg)
+{
+	char			buf[INET_ADDRSTRLEN + 1];
+	const char		*p;
+	const char		*comma;
+	size_t			len;
+	struct in_addr	addr;
+
+	if (opts->decoy_count >= MAX_DECOYS)
+		return (fprintf(stderr,
+				"Error: too many decoys (max %d)\n", MAX_DECOYS), -1);
+	p = arg;
+	while (*p && opts->decoy_count < MAX_DECOYS)
+	{
+		comma = strchr(p, ',');
+		len = comma ? (size_t)(comma - p) : strlen(p);
+		if (len == 0 || len > INET_ADDRSTRLEN)
+			return (fprintf(stderr, "Error: invalid decoy IP in '%s'\n",
+					arg), -1);
+		memcpy(buf, p, len);
+		buf[len] = '\0';
+		if (resolve_host(buf, &addr) < 0)
+			return (-1);
+		opts->decoy_ips[opts->decoy_count] = addr;
+		opts->decoy_count++;
+		p += len;
+		if (*p == ',')
+			p++;
+	}
+	return (0);
+}

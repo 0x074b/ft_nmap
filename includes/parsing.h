@@ -16,6 +16,10 @@ typedef enum e_opt_type
 	OPT_FILE	= 'f',
 	OPT_SPEEDUP	= 'S',
 	OPT_SCAN	= 's',
+	OPT_VERSION	= 'V',
+	OPT_OS		= 'O',
+	OPT_FRAGMENT = 'F',
+	OPT_TIMING	= 'T',
 }	t_opt_type;
 
 /*
@@ -35,15 +39,32 @@ typedef struct s_host
 **     append to this list; each entry is resolved at parse time so the
 **     network code never has to re-parse a string.
 **   - speedup: thread count, 0..MAX_SPEEDUP.
+**   - version_detection: enable service banner grabbing (-sV)
+**   - os_detection: enable OS fingerprinting (-O)
+**   - fragment: enable IP fragmentation (-f)
+**   - timing_level: timing template 0-5 (-T)
+**   - spoof_mac: MAC address for spoofing (--spoof-mac)
+**   - decoy_ips: list of decoy IPs (--decoy)
 */
 typedef struct s_options
 {
-	bool	ports[MAX_PORTS + 1];
-	t_host	*ips;
-	size_t	ip_count;
-	size_t	ip_cap;
-	int		speedup;
-	bool	scan[SCAN_MAX];
+	bool			ports[MAX_PORTS + 1];
+	t_host			*ips;
+	size_t			ip_count;
+	size_t			ip_cap;
+	int				speedup;
+	bool			scan[SCAN_MAX];
+	
+	bool			version_detection;
+	bool			os_detection;
+	bool			fragment;
+	int				timing_level;
+	
+	uint8_t			spoof_mac[6];
+	bool			spoof_mac_set;
+	
+	struct in_addr	decoy_ips[MAX_DECOYS];
+	int				decoy_count;
 }	t_options;
 
 int		parse_opts(int argc, char **argv, t_options *opts);
@@ -54,6 +75,9 @@ int		set_ip(t_options *opts, const char *arg);
 int		set_file(t_options *opts, const char *arg);
 int		set_speedup(t_options *opts, const char *arg);
 int		set_scan(t_options *opts, const char *arg);
+int		set_timing(t_options *opts, const char *arg);
+int		set_spoof_mac(t_options *opts, const char *arg);
+int		set_decoys(t_options *opts, const char *arg);
 
 int		resolve_host(const char *host, struct in_addr *out);
 int		add_host(t_options *opts, const char *host);

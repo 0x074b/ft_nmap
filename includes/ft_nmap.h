@@ -216,6 +216,15 @@ void	scan_run(t_worker *w);
 
 int		run_scan(const t_options *opts, int sock, const char *iface,
 			struct in_addr src, t_scan_result **results, t_pcap_stats *stats);
+
+	/* version detection — service banner grabbing for open ports */
+int		detect_service_version(struct in_addr target, uint16_t port,
+			t_service *svc, uint32_t timeout_ms);
+
+	/* OS detection — fingerprinting from captured packets */
+void	analyze_os_fingerprint(const t_options *opts, t_scan_result **results);
+
+	/* report/ */
 void	report_results(const t_options *opts, t_scan_result **results);
 void	report_pcap_stats(const t_pcap_stats *stats);
 
