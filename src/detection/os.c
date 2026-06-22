@@ -7,37 +7,6 @@
 #include "ft_nmap.h"
 
 /*
-** Simple OS detection heuristic based on IP TTL and TCP window size
-** These are common patterns:
-** - Linux: TTL 64, window varies
-** - Windows: TTL 128, window varies
-** - macOS: TTL 64, window varies
-** Real nmap uses much more sophisticated fingerprinting.
-*/
-static const char *guess_os_from_ttl(uint8_t ttl)
-{
-	if (ttl >= 60 && ttl <= 64)
-		return ("Linux/Unix");
-	if (ttl >= 120 && ttl <= 128)
-		return ("Windows");
-	if (ttl >= 250)
-		return ("Cisco/Network Device");
-	return ("Unknown");
-}
-
-static const char *guess_os_from_window(uint16_t window)
-{
-	/* Very crude heuristic based on initial window size */
-	if (window == 1024)
-		return ("Linux/Unix");
-	if (window == 2048 || window == 4096 || window == 8192 || window == 16384)
-		return ("Windows/BSD");
-	if (window == 65535)
-		return ("BSD");
-	return ("Unknown");
-}
-
-/*
 ** Analyze captured packets and generate OS fingerprints for each host.
 ** In a real implementation, this would parse tons of TCP options,
 ** fragment behavior, timing patterns, etc. Here we use basic heuristics.
