@@ -55,13 +55,13 @@ int	detect_service_version(struct in_addr target, uint16_t port,
 		return (-1);
 	}
 
-	/* Wait for connection with timeout */
+	/* Wait for connection with timeout - use write set to check if connected */
 	FD_ZERO(&rfds);
 	FD_SET(sock, &rfds);
 	tv.tv_sec = timeout_ms / 1000;
 	tv.tv_usec = (timeout_ms % 1000) * 1000;
 
-	ret = select(sock + 1, &rfds, &rfds, NULL, &tv);
+	ret = select(sock + 1, NULL, &rfds, NULL, &tv);
 	if (ret <= 0)
 	{
 		close(sock);
