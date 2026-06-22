@@ -16,6 +16,7 @@ typedef enum e_opt_type
 	OPT_FILE	= 'f',
 	OPT_SPEEDUP	= 'S',
 	OPT_SCAN	= 's',
+	OPT_OS		= 'O',
 }	t_opt_type;
 
 /*
@@ -44,6 +45,7 @@ typedef struct s_options
 	size_t	ip_cap;
 	int		speedup;
 	bool	scan[SCAN_MAX];
+	bool	os_detection;
 }	t_options;
 
 int		parse_opts(int argc, char **argv, t_options *opts);

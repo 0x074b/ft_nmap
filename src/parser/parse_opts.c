@@ -17,17 +17,19 @@ void	print_help(const char *prog)
 		" default %d if flag passed alone)\n",
 		MAX_SPEEDUP, MAX_SPEEDUP);
 	printf("  --scan TYPES      Scan types: SYN,ACK,FIN,NULL,XMAS,UDP\n");
+	printf("  -O, --os-detect   Enable OS detection via fingerprinting\n");
 }
 
 int	parse_opts(int argc, char **argv, t_options *opts)
 {
 	static const struct option longopts[] = {
-		{"help",	no_argument,		0, OPT_HELP},
-		{"ports",	required_argument,	0, OPT_PORTS},
-		{"ip",		required_argument,	0, OPT_IP},
-		{"file",	required_argument,	0, OPT_FILE},
-		{"speedup",	optional_argument,	0, OPT_SPEEDUP},
-		{"scan",	required_argument,	0, OPT_SCAN},
+		{"help",		no_argument,		0, OPT_HELP},
+		{"ports",		required_argument,	0, OPT_PORTS},
+		{"ip",			required_argument,	0, OPT_IP},
+		{"file",		required_argument,	0, OPT_FILE},
+		{"speedup",		optional_argument,	0, OPT_SPEEDUP},
+		{"scan",		required_argument,	0, OPT_SCAN},
+		{"os-detect",	no_argument,		0, OPT_OS},
 		{0, 0, 0, 0},
 	};
 	int		opt;
@@ -35,7 +37,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
-	while ((opt = getopt_long(argc, argv, "hp:i:f:S::s:",
+	while ((opt = getopt_long(argc, argv, "hp:i:f:S::s:O",
 				longopts, NULL)) != -1)
 	{
 		switch (opt)
@@ -66,6 +68,9 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 			if (set_scan(opts, optarg) < 0)
 				return (-1);
 			scan_type_provided = true;
+			break ;
+		case OPT_OS:
+			opts->os_detection = true;
 			break ;
 		default:
 			print_help(argv[0]);

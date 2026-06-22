@@ -81,6 +81,13 @@ static void	report_host(const t_options *opts, size_t h,
 
 	inet_ntop(AF_INET, &opts->ips[h].addr, buf, sizeof(buf));
 	printf("\nScan report for %s (%s)\n", opts->ips[h].input, buf);
+	
+	/* Display OS detection result if available */
+	if (opts->os_detection && results[h][0].service.detected)
+	{
+		printf("OS Detection: %s\n", results[h][0].service.name);
+	}
+	
 	print_table_header(opts);
 	shown = 0;
 	port = 1;
