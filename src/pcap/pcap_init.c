@@ -4,21 +4,44 @@
 #include "ft_nmap.h"
 
 /*
+** Build a BPF expression matching TCP replies destined to any of our source
+** ports: "tcp and (dst port A or dst port B ...)". One sport per selected
+** scan type lets the collector tell the scan types' replies apart.
+*/
+static void	build_sport_filter(char *filter, size_t size,
+		const uint16_t *sports, int count)
+{
+	size_t	off;
+	int		i;
+
+	off = (size_t)snprintf(filter, size, "tcp and (");
+	i = 0;
+	while (i < count)
+	{
+		off += (size_t)snprintf(filter + off, size - off, "%sdst port %u",
+				i ? " or " : "", sports[i]);
+		i++;
+	}
+	snprintf(filter + off, size - off, ")");
+}
+
+/*
 ** Open a live capture handle on iface, non-promiscuous, and install a BPF
-** filter narrowing to TCP replies destined to our source port. Returns NULL
+** filter narrowing to TCP replies destined to our source ports. Returns NULL
 ** on error (message printed to stderr).
 */
-pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport)
+pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
+		int count)
 {
 	char				errbuf[PCAP_ERRBUF_SIZE];
 	struct bpf_program	fp;
-	char				filter[64];
+	char				filter[256];
 	pcap_t				*p;
 
 	p = pcap_open_live(iface, 65535, 0, 10, errbuf);
 	if (!p)
 		return (fprintf(stderr, "Error: pcap_open_live: %s\n", errbuf), NULL);
-	snprintf(filter, sizeof(filter), "tcp and dst port %u", sport);
+	build_sport_filter(filter, sizeof(filter), sports, count);
 	if (pcap_compile(p, &fp, filter, 1, PCAP_NETMASK_UNKNOWN) < 0)
 	{
 		fprintf(stderr, "Error: pcap_compile: %s\n", pcap_geterr(p));
@@ -40,4 +63,20 @@ pcap_t	*pcap_open_for_scan(const char *iface, uint16_t sport)
 		return (NULL);
 	}
 	return (p);
+}
+
+/*
+** Read the kernel capture counters off a handle and fold them into acc. Must
+** be called while the handle is still open (i.e. just before pcap_close).
+** pcap_stats failing (e.g. on some pseudo-interfaces) is non-fatal — we just
+** skip that handle's contribution.
+*/
+void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc)
+{
+	struct pcap_stat	ps;
+
+	if (pcap_stats(p, &ps) < 0)
+		return ;
+	acc->recv += ps.ps_recv;
+	acc->drop += ps.ps_drop;
 }

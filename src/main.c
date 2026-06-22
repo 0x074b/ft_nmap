@@ -7,20 +7,6 @@
 
 #include "ft_nmap.h"
 
-static t_scan_type	selected_scan_type(const t_options *opts)
-{
-	int	i;
-
-	i = 0;
-	while (i < SCAN_MAX)
-	{
-		if (opts->scan[i])
-			return ((t_scan_type)i);
-		i++;
-	}
-	return (SCAN_MAX);
-}
-
 static int	open_raw_socket(void)
 {
 	int	sock;
@@ -42,10 +28,11 @@ static int	open_raw_socket(void)
 	return (sock);
 }
 
-static t_port_state	**alloc_results(size_t ip_count)
+static t_scan_result	**alloc_results(size_t ip_count)
 {
-	t_port_state	**r;
+	t_scan_result	**r;
 	size_t			h;
+	int				port;
 
 	r = calloc(ip_count, sizeof(*r));
 	if (!r)
@@ -60,11 +47,13 @@ static t_port_state	**alloc_results(size_t ip_count)
 			free(r);
 			return (NULL);
 		}
+		for (port = 0; port <= MAX_PORTS; port++)
+			r[h][port].port = (uint16_t)port;
 	}
 	return (r);
 }
 
-static void	free_results(t_port_state **r, size_t ip_count)
+static void	free_results(t_scan_result **r, size_t ip_count)
 {
 	size_t	h;
 
@@ -78,55 +67,33 @@ int	main(int argc, char **argv)
 	t_options		opts;
 	char			iface[IFACE_LEN];
 	struct in_addr	src;
-	uint16_t		sport;
 	int				sock;
-	pcap_t			*p;
-	t_port_state	**results;
-	t_scan_type		scan_type;
+	t_scan_result	**results;
+	t_pcap_stats	stats;
 	struct timespec	start_ts;
 	struct timespec	end_ts;
 	double			elapsed_s;
 
 	if (parse_opts(argc, argv, &opts) < 0)
 		return (1);
-	scan_type = selected_scan_type(&opts);
-	if (scan_type == SCAN_MAX)
-		return (fprintf(stderr, "Error: no scan type selected\n"), 1);
-	if (scan_type != SCAN_SYN && scan_type != SCAN_ACK)
-		return (fprintf(stderr,
-				"Error: selected scan type is not implemented yet\n"), 1);
 	if (pick_interface(iface, &src) < 0)
 		return (1);
 	srand((unsigned int)time(NULL));
 	sock = open_raw_socket();
 	if (sock < 0)
-	{
-		fprintf(stderr, "Hint: raw sockets need CAP_NET_RAW (run as root)\n");
-		return (1);
-	}
+		return (fprintf(stderr,
+				"Hint: raw sockets need CAP_NET_RAW (run as root)\n"), 1);
 	results = alloc_results(opts.ip_count);
 	if (!results)
 		return (close(sock), 1);
+	stats = (t_pcap_stats){0, 0};
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
-	if (opts.speedup == 0)
-	{
-		sport = (uint16_t)(49152 + (rand() % 16000));
-		p = pcap_open_for_scan(iface, sport);
-		if (!p)
-			return (free_results(results, opts.ip_count),
-				close(sock), 1);
-		syn_scan_stride(sock, p, src, sport, &opts, scan_type, 0, 1, results);
-		pcap_close(p);
-	}
-	else
-	{
-		if (run_scan_threaded(&opts, sock, scan_type, iface, src, results) < 0)
-			return (free_results(results, opts.ip_count),
-				close(sock), 1);
-	}
+	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
+		return (free_results(results, opts.ip_count), close(sock), 1);
 	clock_gettime(CLOCK_MONOTONIC, &end_ts);
-	report_results(&opts, scan_type, results);
+	report_results(&opts, results);
+	report_pcap_stats(&stats);
 	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
 		+ (double)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000000.0;
 	printf("Scan completed in %.2f seconds\n", elapsed_s);

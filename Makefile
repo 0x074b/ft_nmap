@@ -17,7 +17,13 @@ SRCS		:= \
 	src/parser/utils.c \
 	src/pcap/pcap_init.c \
 	src/report/report.c \
+	src/scanner/scan.c \
 	src/scanner/syn_scan.c \
+	src/scanner/ack_scan.c \
+	src/scanner/fin_scan.c \
+	src/scanner/null_scan.c \
+	src/scanner/xmas_scan.c \
+	src/scanner/udp_scan.c \
 	src/thread/thread_pool.c
 
 SRCS_PARSING	:= \
