@@ -420,7 +420,7 @@ void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 				continue ;
 			
 			/* Check all scan types for open ports */
-			for (scan_type = 0; scan_type < NB_SCANS; scan_type++)
+			for (scan_type = 0; scan_type < SCAN_MAX; scan_type++)
 			{
 				if (results[h][port].state[scan_type] == PORT_OPEN)
 				{
