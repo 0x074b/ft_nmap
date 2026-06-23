@@ -103,4 +103,5 @@ void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc)
 		return ;
 	acc->recv += ps.ps_recv;
 	acc->drop += ps.ps_drop;
+	acc->ifdrop += ps.ps_ifdrop;
 }

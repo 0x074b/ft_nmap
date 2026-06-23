@@ -215,6 +215,7 @@ typedef struct s_pcap_stats
 {
 	unsigned long	recv;
 	unsigned long	drop;
+	unsigned long	ifdrop;
 }	t_pcap_stats;
 
 void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc);

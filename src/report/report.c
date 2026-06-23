@@ -117,6 +117,7 @@ void	report_results(const t_options *opts, t_scan_result **results)
 */
 void	report_pcap_stats(const t_pcap_stats *stats)
 {
-	printf("\nPackets captured: %lu, dropped by kernel: %lu\n",
-		stats->recv, stats->drop);
+	printf("\nPackets captured: %lu, dropped (ring): %lu, "
+		"dropped (iface/ingest): %lu\n",
+		stats->recv, stats->drop, stats->ifdrop);
 }

@@ -86,7 +86,7 @@ int	main(int argc, char **argv)
 	results = alloc_results(opts.ip_count);
 	if (!results)
 		return (close(sock), 1);
-	stats = (t_pcap_stats){0, 0};
+	stats = (t_pcap_stats){0, 0, 0};
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
