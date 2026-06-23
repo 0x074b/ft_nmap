@@ -4,26 +4,50 @@
 #include "ft_nmap.h"
 
 /*
-** Build a BPF expression matching replies destined to any of our source
-** ports. When UDP scanning is enabled, also capture ICMP so UDP port
-** unreachable responses can be classified.
+** Append "<prim> S1 or <prim> S2 or ..." for every source port, e.g. with
+** prim "dst port" or "icmp[28:2] ==". Returns the new write offset.
+*/
+static size_t	append_or_list(char *filter, size_t size, size_t off,
+		const char *prim, const uint16_t *sports, int count)
+{
+	int	i;
+
+	i = 0;
+	while (i < count)
+	{
+		off += (size_t)snprintf(filter + off, size - off, "%s%s %u",
+				i ? " or " : "", prim, sports[i]);
+		i++;
+	}
+	return (off);
+}
+
+/*
+** Build a BPF expression matching only replies that answer THIS worker's
+** probes — i.e. destined to one of our (per-thread unique) source ports — so
+** workers never capture each other's packets. For TCP/UDP that is a dst-port
+** match. ICMP has no ports, so when UDP scanning we instead match the source
+** port inside the quoted original datagram (ICMP hdr 8 + inner IP hdr 20 =
+** offset 28), gated on type 3 (dest-unreachable); this keeps ICMP scoped to
+** this thread too, rather than every handle grabbing all ICMP on the wire.
 */
 static void	build_sport_filter(char *filter, size_t size,
 		const uint16_t *sports, int count, int udp)
 {
 	size_t	off;
-	int		i;
 
 	off = (size_t)snprintf(filter, size,
-		udp ? "icmp or ((tcp or udp) and (" : "tcp and (");
-	i = 0;
-	while (i < count)
+		udp ? "((tcp or udp) and (" : "tcp and (");
+	off = append_or_list(filter, size, off, "dst port", sports, count);
+	if (udp)
 	{
-		off += (size_t)snprintf(filter + off, size - off, "%sdst port %u",
-				i ? " or " : "", sports[i]);
-		i++;
+		off += (size_t)snprintf(filter + off, size - off,
+				")) or (icmp[0] == 3 and (");
+		off = append_or_list(filter, size, off, "icmp[28:2] ==", sports, count);
+		off += (size_t)snprintf(filter + off, size - off, "))");
 	}
-	off += (size_t)snprintf(filter + off, size - off, udp ? "))" : ")");
+	else
+		off += (size_t)snprintf(filter + off, size - off, ")");
 }
 
 /*
@@ -59,7 +83,7 @@ pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
 {
 	char				errbuf[PCAP_ERRBUF_SIZE];
 	struct bpf_program	fp;
-	char				filter[256];
+	char				filter[512];
 	pcap_t				*p;
 
 	p = create_handle(iface);

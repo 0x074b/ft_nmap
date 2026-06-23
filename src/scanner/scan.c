@@ -210,33 +210,8 @@ static void	scan_collect_replies(t_worker *w, size_t off)
 	{
 		rc = pcap_next_ex(w->p, &hdr, &data);
 		if (rc == 0)
-		{
-			usleep(1000);
 			continue ;
-		}
 		if (rc < 0)
-			break ;
-		handle_reply(w, off, hdr, data);
-	}
-}
-
-/*
-** Mid-scan flush: drain every reply currently buffered, then return at once.
-** The handle is non-blocking, so pcap_next_ex returning 0 means the buffer is
-** empty. Called between send batches to keep the kernel capture buffer from
-** overflowing without paying the full collection window each time — stragglers
-** still in flight are caught by the next flush or the final window.
-*/
-static void	scan_drain(t_worker *w, size_t off)
-{
-	struct pcap_pkthdr	*hdr;
-	const u_char		*data;
-	int					rc;
-
-	while (1)
-	{
-		rc = pcap_next_ex(w->p, &hdr, &data);
-		if (rc <= 0)
 			break ;
 		handle_reply(w, off, hdr, data);
 	}
@@ -266,11 +241,12 @@ static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 			for (h = 0; h < w->opts->ip_count; h++)
 			{
 				w->results[h][port].state[t] = ops->no_reply_state;
-				ops->send(w->sock, w->src, w->sport[t],
-					w->opts->ips[h].addr, (uint16_t)port);
+				if (ops->send(w->sock, w->src, w->sport[t],
+						w->opts->ips[h].addr, (uint16_t)port) < 0)
+					w->send_fail++;
 				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
 				{
-					scan_drain(w, off);
+					scan_collect_replies(w, off);
 					*sent = 0;
 				}
 			}

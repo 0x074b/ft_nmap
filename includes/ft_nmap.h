@@ -24,8 +24,8 @@
 ** frame ring slot at this snaplen, so the byte budget guarantees the count.
 */
 # define PCAP_SNAPLEN			256
-# define PROBE_FLUSH_THRESHOLD	(1024 * 6)
-# define PCAP_BUFFER_SIZE		(PROBE_FLUSH_THRESHOLD * 2 * 512)
+# define PROBE_FLUSH_THRESHOLD	512
+# define PCAP_BUFFER_SIZE		(PROBE_FLUSH_THRESHOLD * 128 * 512)
 
 # define IFACE_LEN			64
 # define HOST_LEN			256
@@ -204,6 +204,7 @@ typedef struct s_worker
 	uint16_t			sport[SCAN_MAX];
 	const t_options		*opts;
 	t_scan_result		**results;
+	uint64_t			send_fail;
 }	t_worker;
 
 /*
@@ -216,6 +217,7 @@ typedef struct s_pcap_stats
 	unsigned long	recv;
 	unsigned long	drop;
 	unsigned long	ifdrop;
+	unsigned long	send_fail;
 }	t_pcap_stats;
 
 void	accumulate_pcap_stats(pcap_t *p, t_pcap_stats *acc);
