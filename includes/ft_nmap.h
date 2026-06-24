@@ -24,8 +24,8 @@
 ** frame ring slot at this snaplen, so the byte budget guarantees the count.
 */
 # define PCAP_SNAPLEN			256
-# define PROBE_FLUSH_THRESHOLD	512
-# define PCAP_BUFFER_SIZE		(PROBE_FLUSH_THRESHOLD * 128 * 512)
+# define PROBE_FLUSH_THRESHOLD	6
+# define PCAP_BUFFER_SIZE		1048576
 
 # define IFACE_LEN			64
 # define HOST_LEN			256
