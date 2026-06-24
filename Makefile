@@ -24,7 +24,9 @@ SRCS		:= \
 	src/scanner/null_scan.c \
 	src/scanner/xmas_scan.c \
 	src/scanner/udp_scan.c \
-	src/thread/thread_pool.c
+	src/thread/thread_pool.c \
+	src/detection/os_detect.c \
+	src/detection/service_detect.c
 
 SRCS_PARSING	:= \
 	src/parser/test.c \
