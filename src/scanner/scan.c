@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/ip_icmp.h>
@@ -193,27 +194,46 @@ static void	handle_reply(const t_worker *w, size_t off,
 }
 
 /*
-** Final collection window draining this worker's pcap handle for 1000ms,
-** giving late (RTT-delayed) replies time to arrive. The BPF filter already
-** narrows to replies destined to any of our source ports, so handle_reply
-** does the per-packet demultiplexing.
+** Drain every reply currently buffered on the handle, demuxing each through
+** handle_reply. Returns the terminating pcap_next_ex code: 0 once the ring is
+** empty, <0 on error.
 */
-static void	scan_collect_replies(t_worker *w, size_t off)
+static int	drain_ready(t_worker *w, size_t off)
 {
-	uint64_t			deadline;
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
 	int					rc;
 
+	while ((rc = pcap_next_ex(w->p, &hdr, &data)) > 0)
+		handle_reply(w, off, hdr, data);
+	return (rc);
+}
+
+/*
+** Final collection window draining this worker's pcap handle for 1000ms,
+** giving late (RTT-delayed) replies time to arrive. Rather than busy-spinning
+** the non-blocking handle, we sleep in poll() on its selectable fd and drain
+** only when data is ready — so under heavy contention (many workers, few cores)
+** a worker yields its core instead of burning the whole window descheduled,
+** which otherwise left replies unread in the ring at close. Falls back to a
+** plain spin if the handle exposes no selectable fd.
+*/
+static void	scan_collect_replies(t_worker *w, size_t off)
+{
+	struct pollfd	pfd;
+	uint64_t		deadline;
+	int				fd;
+
+	fd = pcap_get_selectable_fd(w->p);
+	pfd.fd = fd;
+	pfd.events = POLLIN;
 	deadline = now_ms() + 1000;
 	while (now_ms() < deadline)
 	{
-		rc = pcap_next_ex(w->p, &hdr, &data);
-		if (rc == 0)
+		if (fd >= 0 && poll(&pfd, 1, (int)(deadline - now_ms())) <= 0)
 			continue ;
-		if (rc < 0)
+		if (drain_ready(w, off) < 0)
 			break ;
-		handle_reply(w, off, hdr, data);
 	}
 }
 
