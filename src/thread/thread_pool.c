@@ -163,6 +163,7 @@ int	run_scan(const t_options *opts, int sock, const char *iface,
 		pthread_join(tids[i], NULL);
 	for (i = 0; i < n; i++)
 	{
+		stats->send_fail += workers[i].send_fail;
 		accumulate_pcap_stats(workers[i].p, stats);
 		pcap_close(workers[i].p);
 	}

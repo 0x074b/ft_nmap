@@ -86,7 +86,7 @@ int	main(int argc, char **argv)
 	results = alloc_results(opts.ip_count);
 	if (!results)
 		return (close(sock), 1);
-	stats = (t_pcap_stats){0, 0};
+	stats = (t_pcap_stats){0, 0, 0, 0};
 	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
 	
 	/* Initialize OS detection if enabled */
@@ -96,12 +96,11 @@ int	main(int argc, char **argv)
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), close(sock), 1);
-	clock_gettime(CLOCK_MONOTONIC, &end_ts);
-	
+
 	/* Run OS detection analysis if enabled */
 	if (opts.os_detection)
 		os_detect_analyze(results, opts.ip_count);
-	
+
 	/* Run service detection on open ports if enabled */
 	if (opts.service_detection)
 	{
@@ -111,6 +110,8 @@ int	main(int argc, char **argv)
 	
 	report_results(&opts, results);
 	report_pcap_stats(&stats);
+	printf("sendto errors: %lu\n", stats.send_fail);
+	clock_gettime(CLOCK_MONOTONIC, &end_ts);
 	elapsed_s = (double)(end_ts.tv_sec - start_ts.tv_sec)
 		+ (double)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000000.0;
 	printf("Scan completed in %.2f seconds\n", elapsed_s);

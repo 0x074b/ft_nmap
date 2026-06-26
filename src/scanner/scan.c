@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <poll.h>
 #include <sys/time.h>
 #include <sys/socket.h>
 #include <netinet/ip_icmp.h>
@@ -198,40 +199,59 @@ static void	handle_reply(const t_worker *w, size_t off,
 }
 
 /*
-** Single collection window draining this worker's pcap handle for 1000ms.
-** The BPF filter already narrows to TCP replies destined to any of our
-** source ports, so handle_reply does the per-packet demultiplexing.
+** Drain every reply currently buffered on the handle, demuxing each through
+** handle_reply. Returns the terminating pcap_next_ex code: 0 once the ring is
+** empty, <0 on error.
 */
-static void	scan_collect_replies(t_worker *w)
+static int	drain_ready(t_worker *w, size_t off)
 {
-	uint64_t			deadline;
-	size_t				off;
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
 	int					rc;
 
-	off = dl_header_size(pcap_datalink(w->p));
+	while ((rc = pcap_next_ex(w->p, &hdr, &data)) > 0)
+		handle_reply(w, off, hdr, data);
+	return (rc);
+}
+
+/*
+** Final collection window draining this worker's pcap handle for 1000ms,
+** giving late (RTT-delayed) replies time to arrive. Rather than busy-spinning
+** the non-blocking handle, we sleep in poll() on its selectable fd and drain
+** only when data is ready — so under heavy contention (many workers, few cores)
+** a worker yields its core instead of burning the whole window descheduled,
+** which otherwise left replies unread in the ring at close. Falls back to a
+** plain spin if the handle exposes no selectable fd.
+*/
+static void	scan_collect_replies(t_worker *w, size_t off)
+{
+	struct pollfd	pfd;
+	uint64_t		deadline;
+	int				fd;
+
+	fd = pcap_get_selectable_fd(w->p);
+	pfd.fd = fd;
+	pfd.events = POLLIN;
 	deadline = now_ms() + 1000;
 	while (now_ms() < deadline)
 	{
-		rc = pcap_next_ex(w->p, &hdr, &data);
-		if (rc == 0)
-		{
-			usleep(1000);
+		if (fd >= 0 && poll(&pfd, 1, (int)(deadline - now_ms())) <= 0)
 			continue ;
-		}
-		if (rc < 0)
+		if (drain_ready(w, off) < 0)
 			break ;
-		handle_reply(w, off, hdr, data);
 	}
 }
 
 /*
 ** Send every probe this worker owns for one target port: for each selected
 ** scan type, mark the slot with that type's no_reply_state and emit the probe
-** (from that type's source port) to every host.
+** (from that type's source port) to every host. *sent tracks probes emitted
+** since the last flush; once it crosses PROBE_FLUSH_THRESHOLD the capture
+** buffer is drained mid-burst and the counter reset. The check lives in the
+** innermost loop so even a single port with a huge host list cannot outrun
+** the kernel buffer.
 */
-static void	send_port_probes(t_worker *w, int port)
+static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 {
 	const t_scan_ops	*ops;
 	size_t				h;
@@ -246,8 +266,14 @@ static void	send_port_probes(t_worker *w, int port)
 			for (h = 0; h < w->opts->ip_count; h++)
 			{
 				w->results[h][port].state[t] = ops->no_reply_state;
-				ops->send(w->sock, w->src, w->sport[t],
-					w->opts->ips[h].addr, (uint16_t)port);
+				if (ops->send(w->sock, w->src, w->sport[t],
+						w->opts->ips[h].addr, (uint16_t)port) < 0)
+					w->send_fail++;
+				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
+				{
+					scan_collect_replies(w, off);
+					*sent = 0;
+				}
 			}
 		}
 		t++;
@@ -256,20 +282,25 @@ static void	send_port_probes(t_worker *w, int port)
 
 /*
 ** One worker's full pass. It owns every port p where (p - 1) % nthreads == id.
-** It fires all probes for all selected scan types across its whole stride
-** first, then opens a single collection window — so the cost of waiting for
-** replies is paid once for every scan type at once, not once per type.
+** It fires probes across its whole stride, draining the capture buffer every
+** PROBE_FLUSH_THRESHOLD sends (handled inside send_port_probes) so no host-list
+** size can overflow the kernel buffer. A final collection window then catches
+** stragglers still in flight after the last batch.
 */
 void	scan_run(t_worker *w)
 {
-	int	port;
+	size_t	off;
+	size_t	sent;
+	int		port;
 
+	off = dl_header_size(pcap_datalink(w->p));
+	sent = 0;
 	port = w->id + 1;
 	while (port <= MAX_PORTS)
 	{
 		if (w->opts->ports[port])
-			send_port_probes(w, port);
+			send_port_probes(w, port, off, &sent);
 		port += w->nthreads;
 	}
-	scan_collect_replies(w);
+	scan_collect_replies(w, off);
 }

@@ -157,8 +157,8 @@ void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
 
 	/* Debug: Show every TCP packet received */
 	opt_len = extract_tcp_options_len(tcph);
-	printf("Host %d: flags syn=%d ack=%d rst=%d ttl=%u win=%u opt=%d\n",
-			host_idx, tcph->syn, tcph->ack, tcph->rst, iph->ttl, window, opt_len);
+	// printf("Host %d: flags syn=%d ack=%d rst=%d ttl=%u win=%u opt=%d\n",
+	// 		host_idx, tcph->syn, tcph->ack, tcph->rst, iph->ttl, window, opt_len);
 
 	/* Ignore invalid packets */
 	if (!is_synack && !is_rst)
@@ -167,7 +167,7 @@ void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
 	/* Ignore RST with window=0 (not a valid response) */
 	if (is_rst && window == 0)
 	{
-		printf("  -> Ignoring RST with window=0 (invalid)\n");
+		// printf("  -> Ignoring RST with window=0 (invalid)\n");
 		return ;
 	}
 
@@ -183,8 +183,8 @@ void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
 		fp->ttl = reconstructed_ttl;
 		fp->valid = true;
 		fp->from_synack = true;
-		printf("  -> Stored from SYN+ACK (TTL=%u, Win=%u, OptLen=%u)\n",
-				fp->ttl, fp->window, fp->tcp_opt_len);
+		// printf("  -> Stored from SYN+ACK (TTL=%u, Win=%u, OptLen=%u)\n",
+		// 		fp->ttl, fp->window, fp->tcp_opt_len);
 		return ;
 	}
 
@@ -200,15 +200,15 @@ void	os_extract_fingerprint(int host_idx, const struct iphdr *iph,
 		fp->ttl = reconstructed_ttl;
 		fp->valid = true;
 		fp->from_synack = false;
-		printf("  -> Stored from RST (TTL=%u, Win=%u, OptLen=%u)\n",
-				fp->ttl, fp->window, fp->tcp_opt_len);
+		// printf("  -> Stored from RST (TTL=%u, Win=%u, OptLen=%u)\n",
+		// 		fp->ttl, fp->window, fp->tcp_opt_len);
 		return ;
 	}
 
 	/* We already have a SYN+ACK, ignore this RST */
 	if (is_rst && fp->from_synack)
 	{
-		printf("  -> Ignoring RST (already have SYN+ACK)\n");
+		// printf("  -> Ignoring RST (already have SYN+ACK)\n");
 		return ;
 	}
 }
