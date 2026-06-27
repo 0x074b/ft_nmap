@@ -73,16 +73,17 @@ static t_port_state	aggregate_state(const t_options *opts,
 }
 
 /*
-** A port earns a table row when its aggregate state is not CLOSED or UNKNOWN.
-** UNFILTERED-only results (ACK scan alone, no other verdict) are still shown
-** as they carry useful firewall-mapping information.
+** A port earns a table row only when it might have a reachable service:
+** open, open|filtered, or unfiltered (ACK-only firewall probe).
+** Filtered and closed ports are suppressed like nmap's default behaviour
+** and counted separately in the "Not shown" summary line.
 */
 static int	port_is_interesting(const t_options *opts, const t_scan_result *res)
 {
 	t_port_state	s;
 
 	s = aggregate_state(opts, res);
-	return (s != PORT_CLOSED && s != PORT_UNKNOWN);
+	return (s == PORT_OPEN || s == PORT_OPEN_FILTERED || s == PORT_UNFILTERED);
 }
 
 /*
@@ -145,10 +146,12 @@ static void	print_port_row(const t_options *opts, const t_scan_result *res)
 static void	report_host(const t_options *opts, size_t h,
 		t_scan_result **results)
 {
-	char	buf[INET_ADDRSTRLEN];
-	int		port;
-	int		shown;
-	int		not_shown;
+	char		buf[INET_ADDRSTRLEN];
+	int			port;
+	int			shown;
+	int			not_shown_filtered;
+	int			not_shown_closed;
+	t_port_state	s;
 
 	inet_ntop(AF_INET, &opts->ips[h].addr, buf, sizeof(buf));
 	printf("\nScan report for %s (%s)\n", opts->ips[h].input, buf);
@@ -157,7 +160,8 @@ static void	report_host(const t_options *opts, size_t h,
 		printf("OS Detection: %s\n", results[h][0].service.name);
 
 	shown = 0;
-	not_shown = 0;
+	not_shown_filtered = 0;
+	not_shown_closed = 0;
 	port = 1;
 	while (port <= MAX_PORTS)
 	{
@@ -166,16 +170,32 @@ static void	report_host(const t_options *opts, size_t h,
 			if (port_is_interesting(opts, &results[h][port]))
 				shown++;
 			else
-				not_shown++;
+			{
+				s = aggregate_state(opts, &results[h][port]);
+				if (s == PORT_FILTERED)
+					not_shown_filtered++;
+				else
+					not_shown_closed++;
+			}
 		}
 		port++;
 	}
-	if (not_shown > 0)
-		printf("Not shown: %d closed port%s\n",
-			not_shown, not_shown > 1 ? "s" : "");
+	if (not_shown_filtered > 0 || not_shown_closed > 0)
+	{
+		printf("Not shown: ");
+		if (not_shown_filtered > 0)
+			printf("%d filtered port%s",
+				not_shown_filtered, not_shown_filtered > 1 ? "s" : "");
+		if (not_shown_filtered > 0 && not_shown_closed > 0)
+			printf(", ");
+		if (not_shown_closed > 0)
+			printf("%d closed port%s",
+				not_shown_closed, not_shown_closed > 1 ? "s" : "");
+		printf("\n");
+	}
 	if (shown == 0)
 	{
-		printf("All scanned ports are closed.\n");
+		printf("All scanned ports are closed or filtered.\n");
 		return ;
 	}
 	print_table_header(opts);
