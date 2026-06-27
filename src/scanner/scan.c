@@ -208,37 +208,54 @@ static int	drain_ready(t_worker *w, size_t off)
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
 	int					rc;
+	int					count;
 
+	count = 0;
 	while ((rc = pcap_next_ex(w->p, &hdr, &data)) > 0)
+	{
 		handle_reply(w, off, hdr, data);
-	return (rc);
+		count++;
+	}
+	if (rc < 0)
+		return (-1);
+	return (count);
 }
 
 /*
-** Final collection window draining this worker's pcap handle for 1000ms,
-** giving late (RTT-delayed) replies time to arrive. Rather than busy-spinning
-** the non-blocking handle, we sleep in poll() on its selectable fd and drain
-** only when data is ready — so under heavy contention (many workers, few cores)
-** a worker yields its core instead of burning the whole window descheduled,
-** which otherwise left replies unread in the ring at close. Falls back to a
-** plain spin if the handle exposes no selectable fd.
+** Final collection window: wait for stragglers after all probes have been
+** sent.  We stop as soon as the capture fd has been idle for IDLE_CUTOFF_MS
+** consecutive milliseconds, or after HARD_DEADLINE_MS total — whichever
+** comes first.  For localhost every reply arrives within a microsecond, so
+** the idle cutoff fires almost immediately.  For remote targets the idle gap
+** catches the last reply and exits cleanly without burning the full deadline.
 */
+# define HARD_DEADLINE_MS	1000
+# define IDLE_CUTOFF_MS		50
+
 static void	scan_collect_replies(t_worker *w, size_t off)
 {
 	struct pollfd	pfd;
 	uint64_t		deadline;
+	uint64_t		idle_since;
 	int				fd;
+	int				got;
 
 	fd = pcap_get_selectable_fd(w->p);
 	pfd.fd = fd;
 	pfd.events = POLLIN;
-	deadline = now_ms() + 1000;
+	deadline = now_ms() + HARD_DEADLINE_MS;
+	idle_since = now_ms();
 	while (now_ms() < deadline)
 	{
-		if (fd >= 0 && poll(&pfd, 1, (int)(deadline - now_ms())) <= 0)
-			continue ;
-		if (drain_ready(w, off) < 0)
+		if (now_ms() - idle_since >= IDLE_CUTOFF_MS)
 			break ;
+		if (fd >= 0 && poll(&pfd, 1, IDLE_CUTOFF_MS) <= 0)
+			continue ;
+		got = drain_ready(w, off);
+		if (got < 0)
+			break ;
+		if (got > 0)
+			idle_since = now_ms();
 	}
 }
 
@@ -271,7 +288,7 @@ static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 					w->send_fail++;
 				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
 				{
-					scan_collect_replies(w, off);
+					drain_ready(w, off);
 					*sent = 0;
 				}
 			}
