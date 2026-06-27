@@ -260,18 +260,18 @@ static void	resolve_service_name(uint16_t port, char *service_str)
 **   3. RPC NULL call                 — port 111 specifically
 ** Protocol is detected from response content, not the port number.
 */
-int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
+int	service_detect_port(struct in_addr addr, uint16_t port, char *version_str)
 {
 	char	response[SERVICE_BUFFER_SIZE];
 	int		n;
 
-	if (!service_str)
+	if (!version_str)
 		return (-1);
-	resolve_service_name(port, service_str);
+	version_str[0] = '\0';
 	n = send_service_probe(addr, port, NULL, 0, response, sizeof(response));
 	if (n > 0)
 	{
-		parse_any_banner(response, n, service_str);
+		parse_any_banner(response, n, version_str);
 		return (n);
 	}
 	n = send_service_probe(addr, port,
@@ -279,7 +279,7 @@ int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 			response, sizeof(response));
 	if (n > 0)
 	{
-		parse_any_banner(response, n, service_str);
+		parse_any_banner(response, n, version_str);
 		return (n);
 	}
 	if (port == 111)
@@ -350,11 +350,11 @@ void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 							opts->ips[h].input, port);
 					fflush(stdout);
 					service_detect_port(opts->ips[h].addr, (uint16_t)port,
-							results[h][port].service.name);
-					if (results[h][port].service.name[0])
+							results[h][port].service.version);
+					if (results[h][port].service.version[0])
 					{
 						results[h][port].service.detected = true;
-						printf("%s\n", results[h][port].service.name);
+						printf("%s\n", results[h][port].service.version);
 					}
 					else
 						printf("(no response)\n");

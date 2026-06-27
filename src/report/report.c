@@ -138,7 +138,10 @@ static void	print_table_header(const t_options *opts)
 			printf("%-15s", scan_type_name((t_scan_type)i));
 		i++;
 	}
-	printf("SERVICE\n");
+	if (opts->service_detection)
+		printf("%-16s%s\n", "SERVICE", "VERSION");
+	else
+		printf("SERVICE\n");
 }
 
 /*
@@ -177,7 +180,11 @@ static void	print_port_row(const t_options *opts, const t_scan_result *res)
 
 	service = (res->service.detected && res->service.name[0])
 		? res->service.name : "-";
-	printf("%s\n", service);
+	if (opts->service_detection)
+		printf("%-16s%s\n", service,
+			(res->service.version[0] ? res->service.version : "-"));
+	else
+		printf("%s\n", service);
 }
 
 static void	report_host(const t_options *opts, size_t h,
