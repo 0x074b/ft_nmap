@@ -77,6 +77,32 @@ static const t_probe	g_probes[] = {
 		53
 	},
 	{
+		/*
+		** Portmapper / rpcbind: record-mark framing + RPC NULL call.
+		** Fragment header (last frag bit + 40-byte body), XID, CALL, rpcvers 2,
+		** prog 100000 (PORTMAP), vers 2, proc 0 (NULL), AUTH_NULL cred+verif.
+		*/
+		111,
+		"rpcbind",
+		"\x80\x00\x00\x28"
+		"\x72\xfe\x1d\x13"
+		"\x00\x00\x00\x00"
+		"\x00\x00\x00\x02"
+		"\x00\x01\x86\xa0"
+		"\x00\x00\x00\x02"
+		"\x00\x00\x00\x00"
+		"\x00\x00\x00\x00\x00\x00\x00\x00"
+		"\x00\x00\x00\x00\x00\x00\x00\x00",
+		44
+	},
+	{
+		/* CUPS exposes an HTTP-like interface on 631 — same GET probe works. */
+		631,
+		"ipp",
+		"GET / HTTP/1.0\r\nHost: nmap\r\nConnection: close\r\n\r\n",
+		53
+	},
+	{
 		3306,
 		"mysql",
 		"",
@@ -95,6 +121,38 @@ static const t_probe	g_probes[] = {
 		0
 	}
 };
+
+/*
+** Parse IPP/CUPS response: extract the Server header just like HTTP, but
+** label it "IPP:" so it is clear this came from an IPP service.
+*/
+static void	parse_ipp_response(const char *response, char *service_str)
+{
+	const char	*p;
+	const char	*start;
+	const char	*end;
+	size_t		len;
+	char		buf[256];
+
+	if (!response)
+		return ;
+	p = str_find_case(response, "Server:");
+	if (!p)
+		return ;
+	p += 7;
+	while (*p && isspace(*p))
+		p++;
+	start = p;
+	end = start;
+	while (*end && *end != '\r' && *end != '\n')
+		end++;
+	len = end - start;
+	if (len > 0 && len < 200)
+	{
+		snprintf(buf, sizeof(buf), "IPP: %.*s", (int)len, start);
+		strncpy(service_str, buf, SERVICE_LEN - 1);
+	}
+}
 
 /*
 ** Parse SSH banner to extract version
@@ -386,25 +444,36 @@ int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 		parse_http_response(response, service_str);
 	else if (strcmp(probe->name, "ftp") == 0)
 		parse_ftp_banner(response, service_str);
+	else if (strcmp(probe->name, "ipp") == 0)
+		parse_ipp_response(response, service_str);
+	else if (strcmp(probe->name, "rpcbind") == 0)
+		; /* binary RPC reply confirms the service; name already set */
 	else
 	{
-		/* Fallback: use first line of response */
+		/*
+		** Fallback: use the first line of the response only when it is
+		** entirely printable ASCII.  Binary responses (e.g. TLS greetings,
+		** RPC framing) are silently ignored and the getservbyport name is
+		** kept intact.
+		*/
 		size_t	len;
+		size_t	k;
 		char	*nl;
-		
+		int		printable;
+
 		nl = strchr(response, '\n');
 		if (!nl)
 			nl = strchr(response, '\r');
-		
 		if (nl)
-			len = nl - response;
+			len = (size_t)(nl - response);
 		else
 			len = strlen(response);
-		
-		if (len > 0 && len < 100)
+		printable = (len > 0 && len < 100);
+		for (k = 0; printable && k < len; k++)
+			if ((unsigned char)response[k] < 32 && response[k] != '\t')
+				printable = 0;
+		if (printable)
 			snprintf(service_str, SERVICE_LEN, "%.*s", (int)len, response);
-		else
-			snprintf(service_str, SERVICE_LEN, "%s", probe->name);
 	}
 
 	return (n);
