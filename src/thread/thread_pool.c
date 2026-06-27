@@ -9,13 +9,10 @@
 ** Each worker owns a port stride: worker id scans every port p where
 ** (p - 1) % nthreads == id, sending every selected scan type. The shared
 ** results table is partitioned by port, so workers never write to the same
-** slot — no lock needed.
+** slot — no lock needed. The per-worker pass itself lives in worker_main
+** (src/scanner/scan.c, the pthread start routine); run_scan below just hands
+** out the strides and threads.
 */
-static void	*worker_main(void *arg)
-{
-	scan_run((t_worker *)arg);
-	return (NULL);
-}
 
 /*
 ** Returns true if sport is already used by any worker for any scan type.

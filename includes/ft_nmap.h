@@ -174,7 +174,7 @@ typedef struct s_config
 }	t_config;
 
 	/* network/ */
-int		pick_interface(char *iface, struct in_addr *src);
+int		get_source_ip(struct in_addr *src);
 
 	/* packet/ */
 void	build_ip_hdr(struct iphdr *iph, struct in_addr src, struct in_addr dst,
@@ -226,8 +226,9 @@ pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
 
 	/* scanner/ — generic, scan-type-driven; declared after parsing.h because
 	** t_options lives there. The concrete per-type probe builders and reply
-	** classifiers live behind scan_ops() in scanner_internal.h. */
-void	scan_run(t_worker *w);
+	** classifiers live behind scan_ops() in scanner_internal.h. worker_main is
+	** the per-worker pass and doubles as the pthread start routine. */
+void	*worker_main(void *arg);
 
 int		run_scan(const t_options *opts, int sock, const char *iface,
 			struct in_addr src, t_scan_result **results, t_pcap_stats *stats);

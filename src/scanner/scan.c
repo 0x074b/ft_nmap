@@ -112,7 +112,7 @@ static int	type_for_sport(const t_worker *w, uint16_t dport)
 ** Demultiplex one captured TCP reply into the results table: saddr -> host,
 ** dest port -> scan type, source port -> target port, then that type's
 ** classifier turns the flags into a port state. PORT_UNKNOWN means "no
-** verdict" so the slot keeps the no_reply_state scan_run pre-filled.
+** verdict" so the slot keeps the no_reply_state worker_main pre-filled.
 */
 static void	handle_reply(const t_worker *w, size_t off,
 		const struct pcap_pkthdr *hdr, const u_char *data)
@@ -281,18 +281,22 @@ static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 }
 
 /*
-** One worker's full pass. It owns every port p where (p - 1) % nthreads == id.
-** It fires probes across its whole stride, draining the capture buffer every
+** Thread entry point for one worker's full pass (also called inline for
+** worker 0). The worker owns every port p where (p - 1) % nthreads == id and
+** fires probes across its whole stride, draining the capture buffer every
 ** PROBE_FLUSH_THRESHOLD sends (handled inside send_port_probes) so no host-list
 ** size can overflow the kernel buffer. A final collection window then catches
-** stragglers still in flight after the last batch.
+** stragglers still in flight after the last batch. Returns NULL to satisfy the
+** pthread start-routine signature; run_scan ignores it.
 */
-void	scan_run(t_worker *w)
+void	*worker_main(void *arg)
 {
-	size_t	off;
-	size_t	sent;
-	int		port;
+	t_worker	*w;
+	size_t		off;
+	size_t		sent;
+	int			port;
 
+	w = (t_worker *)arg;
 	off = dl_header_size(pcap_datalink(w->p));
 	sent = 0;
 	port = w->id + 1;
@@ -303,4 +307,5 @@ void	scan_run(t_worker *w)
 		port += w->nthreads;
 	}
 	scan_collect_replies(w, off);
+	return (NULL);
 }

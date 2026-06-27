@@ -75,13 +75,18 @@ int	resolve_host(const char *host, struct in_addr *out)
 	struct sockaddr_in	*addr;
 	int					err;
 
+	res = NULL;
 	memset(&hints, 0, sizeof(hints));
 	hints.ai_family = AF_INET;
 	hints.ai_socktype = SOCK_STREAM;
 	err = getaddrinfo(host, NULL, &hints, &res);
 	if (err != 0)
-		return (fprintf(stderr, "Error: cannot resolve '%s': %s\n",
-				host, gai_strerror(err)), -1);
+	{
+		fprintf(stderr, "Error: cannot resolve '%s': %s\n",
+			host, gai_strerror(err));
+		freeaddrinfo(res);
+		return (-1);
+	}
 	addr = (struct sockaddr_in *)res->ai_addr;
 	*out = addr->sin_addr;
 	freeaddrinfo(res);
@@ -109,11 +114,13 @@ static int	find_duplicate_ip(const t_options *opts, struct in_addr addr)
 }
 
 /*
-** Append a single host to opts->ips. Resolves it up front so failures
-** abort parsing early, and grows the ips array geometrically up to
-** MAX_TARGETS. Hosts resolving to an already-listed IP are skipped (not an
-** error): scanning the same IP twice yields identical results and the reply
-** routing cannot tell duplicate slots apart.
+** Append a single host to opts->ips, growing the array geometrically up to
+** MAX_TARGETS. A host that cannot be resolved is reported (by resolve_host)
+** and skipped, not fatal, so one bad line in a --file list does not abort the
+** whole scan. Hosts resolving to an already-listed IP are likewise skipped:
+** scanning the same IP twice yields identical results and the reply routing
+** cannot tell duplicate slots apart. Returns -1 only on hard errors (host list
+** full, allocation failure) that should stop parsing.
 */
 int	add_host(t_options *opts, const char *host)
 {
@@ -128,7 +135,7 @@ int	add_host(t_options *opts, const char *host)
 	if (strlen(host) >= HOST_LEN)
 		return (fprintf(stderr, "Error: host too long: %s\n", host), -1);
 	if (resolve_host(host, &addr) < 0)
-		return (-1);
+		return (0);
 	dup = find_duplicate_ip(opts, addr);
 	if (dup >= 0)
 		return (fprintf(stderr, "Note: skipping '%s', duplicate of '%s'\n",
@@ -150,6 +157,19 @@ int	add_host(t_options *opts, const char *host)
 	opts->ips[opts->ip_count].addr = addr;
 	opts->ip_count++;
 	return (0);
+}
+
+/*
+** Release the dynamically grown ips array and reset the list to empty, so the
+** struct is safe to free again or reuse. free(NULL) is a no-op, so calling
+** this on an options struct that never allocated any hosts is fine.
+*/
+void	free_options(t_options *opts)
+{
+	free(opts->ips);
+	opts->ips = NULL;
+	opts->ip_count = 0;
+	opts->ip_cap = 0;
 }
 
 int	set_ip(t_options *opts, const char *arg)
