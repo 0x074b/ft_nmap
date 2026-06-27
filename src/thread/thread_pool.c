@@ -6,12 +6,14 @@
 #include "ft_nmap.h"
 
 /*
-** Each worker owns a port stride: worker id scans every port p where
-** (p - 1) % nthreads == id, sending every selected scan type. The shared
-** results table is partitioned by port, so workers never write to the same
-** slot — no lock needed. The per-worker pass itself lives in worker_main
-** (src/scanner/scan.c, the pthread start routine); run_scan below just hands
-** out the strides and threads.
+** Each worker owns a stride of the flattened host * port work space (see
+** worker_main): worker id handles every work unit u where u % nthreads == id,
+** sending every selected scan type for that (host, port). Because each
+** (host, port) pair belongs to exactly one worker, the shared results table is
+** still partitioned with no overlapping writes — no lock needed — and replies
+** route back to their sender via that worker's unique source port. The
+** per-worker pass lives in worker_main (src/scanner/scan.c, the pthread start
+** routine); run_scan below just hands out the work and threads.
 */
 
 /*
@@ -113,34 +115,56 @@ static int	open_worker_handles(t_worker *workers, int n, const char *iface)
 	return (0);
 }
 
-static void	init_workers(t_worker *workers, int n, int sock,
-		const t_options *opts, struct in_addr src, t_scan_result **results)
+/*
+** Flatten the selected ports (a sparse bool array) into a compact list of port
+** numbers and return how many there are. Workers stride the combined
+** host * port work space, so they need the active ports as a dense array.
+*/
+static int	collect_active_ports(const t_options *opts, uint16_t *out)
+{
+	int	port;
+	int	n;
+
+	n = 0;
+	port = 1;
+	while (port <= MAX_PORTS)
+	{
+		if (opts->ports[port])
+			out[n++] = (uint16_t)port;
+		port++;
+	}
+	return (n);
+}
+
+static void	init_workers(t_worker *workers, int n, t_worker shared)
 {
 	int	i;
 
 	for (i = 0; i < n; i++)
 	{
+		workers[i] = shared;
 		workers[i].id = i;
 		workers[i].nthreads = n;
-		workers[i].sock = sock;
-		workers[i].src = src;
-		workers[i].opts = opts;
-		workers[i].results = results;
 	}
 }
 
 /*
-** Run the whole scan in one pass with n = speedup + 1 strides. Each worker
-** sends every selected scan type across its stride, then collects once. The
-** extra speedup workers (ids 1..n-1) run on their own threads; worker 0 runs
-** on the main thread itself, so speedup 0 collapses to a single inline stride.
-** Stats are summed and handles closed once every worker has finished.
+** Run the whole scan in one pass with n = speedup + 1 workers. The
+** host * port work space is strided across all workers (see worker_main), so
+** every worker stays busy whether the scan is a few hosts on many ports or many
+** hosts on a few ports. The extra speedup workers (ids 1..n-1) run on their own
+** threads; worker 0 runs on the main thread itself, so speedup 0 collapses to a
+** single inline pass. Stats are summed and handles closed once every worker has
+** finished. active_ports lives on this stack frame, which outlives the workers
+** (we join before returning), so a shared pointer into it is safe.
 */
 int	run_scan(const t_options *opts, int sock, const char *iface,
 		struct in_addr src, t_scan_result **results, t_pcap_stats *stats)
 {
 	t_worker	*workers;
 	pthread_t	*tids;
+	uint16_t	active_ports[MAX_PORTS];
+	t_worker	shared;
 	int			n;
 	int			i;
 
@@ -149,7 +173,14 @@ int	run_scan(const t_options *opts, int sock, const char *iface,
 	tids = calloc(n, sizeof(*tids));
 	if (!workers || !tids)
 		return (free(workers), free(tids), -1);
-	init_workers(workers, n, sock, opts, src, results);
+	shared = (t_worker){0};
+	shared.sock = sock;
+	shared.src = src;
+	shared.opts = opts;
+	shared.results = results;
+	shared.active_ports = active_ports;
+	shared.nports = collect_active_ports(opts, active_ports);
+	init_workers(workers, n, shared);
 	assign_sports(workers, n, opts);
 	if (open_worker_handles(workers, n, iface) < 0)
 		return (free(workers), free(tids), -1);

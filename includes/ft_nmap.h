@@ -203,6 +203,8 @@ typedef struct s_worker
 	struct in_addr		src;
 	uint16_t			sport[SCAN_MAX];
 	const t_options		*opts;
+	const uint16_t		*active_ports;
+	int					nports;
 	t_scan_result		**results;
 	uint64_t			send_fail;
 }	t_worker;
