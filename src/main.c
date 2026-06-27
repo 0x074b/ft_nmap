@@ -101,7 +101,10 @@ int	main(int argc, char **argv)
 	if (opts.os_detection)
 		os_detect_analyze(results, opts.ip_count);
 
-	/* Run service detection on open ports if enabled */
+	/* Always resolve service names from /etc/services (no network cost) */
+	service_resolve_names(&opts, results);
+
+	/* Run banner/version probing if requested (-sV) */
 	if (opts.service_detection)
 	{
 		printf("\nDetecting services...\n");

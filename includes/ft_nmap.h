@@ -240,6 +240,7 @@ void	os_detect_analyze(t_scan_result **results, size_t ip_count);
 
 	/* Service detection - version detection */
 int		service_detect_port(struct in_addr addr, uint16_t port, char *service_str);
+void	service_resolve_names(const t_options *opts, t_scan_result **results);
 void	service_detect_analyze(const t_options *opts, t_scan_result **results);
 
 void	report_results(const t_options *opts, t_scan_result **results);

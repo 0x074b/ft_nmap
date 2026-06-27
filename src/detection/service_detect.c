@@ -411,6 +411,39 @@ int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 }
 
 /*
+** Resolve service names for all open ports using getservbyport only.
+** No network connections — always called after every scan.
+*/
+void	service_resolve_names(const t_options *opts, t_scan_result **results)
+{
+	size_t	h;
+	int		port;
+	int		scan_type;
+
+	if (!opts || !results)
+		return ;
+
+	for (h = 0; h < opts->ip_count; h++)
+	{
+		for (port = 1; port <= MAX_PORTS; port++)
+		{
+			if (!results[h][port].port)
+				continue ;
+			for (scan_type = 0; scan_type < SCAN_MAX; scan_type++)
+			{
+				if (results[h][port].state[scan_type] == PORT_OPEN)
+				{
+					resolve_service_name((uint16_t)port,
+						results[h][port].service.name);
+					results[h][port].service.detected = true;
+					break ;
+				}
+			}
+		}
+	}
+}
+
+/*
 ** Analyze services on all open ports
 ** Called after scan completes
 */
