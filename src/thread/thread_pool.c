@@ -191,7 +191,8 @@ int	run_scan(const t_options *opts, int sock, const char *iface,
 	rctx.sports = sports;
 	rctx.results = results;
 	rctx.senders_done = &senders_done;
-/	pthread_create(&recv_tid, NULL, receiver_main, &rctx);
+	ncores = (int)sysconf(_SC_NPROCESSORS_ONLN);
+	pthread_create(&recv_tid, NULL, receiver_main, &rctx);
 	pin_tid(recv_tid, ncores > 1 ? 0 : -1);
 	init_senders(senders, n, shared);
 	start_senders(senders, tids, n, ncores);
