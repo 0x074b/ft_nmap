@@ -117,5 +117,6 @@ int	main(int argc, char **argv)
 	printf("Scan completed in %.2f seconds\n", elapsed_s);
 	free_results(results, opts.ip_count);
 	close(sock);
+
 	return (0);
 }
