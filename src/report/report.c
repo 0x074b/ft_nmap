@@ -77,13 +77,50 @@ static t_port_state	aggregate_state(const t_options *opts,
 ** open, open|filtered, or unfiltered (ACK-only firewall probe).
 ** Filtered and closed ports are suppressed like nmap's default behaviour
 ** and counted separately in the "Not shown" summary line.
+/*
+** True when ACK is the sole active scan type.  In that mode the roles of
+** FILTERED and UNFILTERED are inverted relative to a SYN scan:
+**   UNFILTERED = baseline (RST received — no stateful firewall)  → hide
+**   FILTERED   = anomaly (no RST — stateful firewall present)    → show
+*/
+static int	only_ack_active(const t_options *opts)
+{
+	int	i;
+
+	if (!opts->scan[SCAN_ACK])
+		return (0);
+	i = 0;
+	while (i < SCAN_MAX)
+	{
+		if (i != SCAN_ACK && opts->scan[i])
+			return (0);
+		i++;
+	}
+	return (1);
+}
+
+/*
+** State-aware interest filter — mirrors nmap's default "not shown" logic:
+**
+**   OPEN          always shown (live service found)
+**   OPEN_FILTERED always shown (might be a live service — FIN/NULL/XMAS)
+**   FILTERED      shown ONLY for ACK-only scans (stateful firewall found);
+**                 hidden for all other scan combinations so targets where
+**                 every port is firewalled (google, etc.) stay clean
+**   UNFILTERED    never shown — it is the ACK-scan baseline (RST received)
+**   CLOSED        never shown — it is the SYN/FIN/etc. baseline
+**   UNKNOWN       never shown
 */
 static int	port_is_interesting(const t_options *opts, const t_scan_result *res)
 {
 	t_port_state	s;
 
 	s = aggregate_state(opts, res);
-	return (s == PORT_OPEN || s == PORT_OPEN_FILTERED || s == PORT_UNFILTERED);
+	if (s == PORT_OPEN || s == PORT_OPEN_FILTERED)
+		return (1);
+	if (s == PORT_FILTERED && only_ack_active(opts))
+		return (1);
+	return (0);
 }
 
 /*
@@ -146,11 +183,13 @@ static void	print_port_row(const t_options *opts, const t_scan_result *res)
 static void	report_host(const t_options *opts, size_t h,
 		t_scan_result **results)
 {
-	char		buf[INET_ADDRSTRLEN];
-	int			port;
-	int			shown;
-	int			not_shown_filtered;
-	int			not_shown_closed;
+	char			buf[INET_ADDRSTRLEN];
+	int				port;
+	int				shown;
+	int				not_shown_filtered;
+	int				not_shown_unfiltered;
+	int				not_shown_closed;
+	int				printed;
 	t_port_state	s;
 
 	inet_ntop(AF_INET, &opts->ips[h].addr, buf, sizeof(buf));
@@ -161,6 +200,7 @@ static void	report_host(const t_options *opts, size_t h,
 
 	shown = 0;
 	not_shown_filtered = 0;
+	not_shown_unfiltered = 0;
 	not_shown_closed = 0;
 	port = 1;
 	while (port <= MAX_PORTS)
@@ -174,25 +214,43 @@ static void	report_host(const t_options *opts, size_t h,
 				s = aggregate_state(opts, &results[h][port]);
 				if (s == PORT_FILTERED)
 					not_shown_filtered++;
+				else if (s == PORT_UNFILTERED)
+					not_shown_unfiltered++;
 				else
 					not_shown_closed++;
 			}
 		}
 		port++;
 	}
-	if (not_shown_filtered > 0 || not_shown_closed > 0)
+	printed = 0;
+	if (not_shown_filtered > 0)
 	{
-		printf("Not shown: ");
-		if (not_shown_filtered > 0)
-			printf("%d filtered port%s",
-				not_shown_filtered, not_shown_filtered > 1 ? "s" : "");
-		if (not_shown_filtered > 0 && not_shown_closed > 0)
-			printf(", ");
-		if (not_shown_closed > 0)
-			printf("%d closed port%s",
-				not_shown_closed, not_shown_closed > 1 ? "s" : "");
-		printf("\n");
+		printf("Not shown: %d filtered port%s",
+			not_shown_filtered, not_shown_filtered > 1 ? "s" : "");
+		printed = 1;
 	}
+	if (not_shown_unfiltered > 0)
+	{
+		if (printed)
+			printf(", ");
+		else
+			printf("Not shown: ");
+		printf("%d unfiltered port%s",
+			not_shown_unfiltered, not_shown_unfiltered > 1 ? "s" : "");
+		printed = 1;
+	}
+	if (not_shown_closed > 0)
+	{
+		if (printed)
+			printf(", ");
+		else
+			printf("Not shown: ");
+		printf("%d closed port%s",
+			not_shown_closed, not_shown_closed > 1 ? "s" : "");
+		printed = 1;
+	}
+	if (printed)
+		printf("\n");
 	if (shown == 0)
 	{
 		printf("All scanned ports are closed or filtered.\n");
