@@ -8,6 +8,7 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <ctype.h>
+#include <netdb.h>
 
 #include "ft_nmap.h"
 
@@ -321,6 +322,21 @@ static int	send_service_probe(struct in_addr addr, uint16_t port,
 }
 
 /*
+** Resolve the registered service name for a port via the system's
+** /etc/services database (getservbyport). Falls back to "unknown".
+*/
+static void	resolve_service_name(uint16_t port, char *service_str)
+{
+	struct servent	*se;
+
+	se = getservbyport(htons(port), NULL);
+	if (se && se->s_name)
+		snprintf(service_str, SERVICE_LEN, "%s", se->s_name);
+	else
+		snprintf(service_str, SERVICE_LEN, "unknown");
+}
+
+/*
 ** Find probe for a given port
 */
 static const t_probe	*find_probe(uint16_t port)
@@ -350,23 +366,18 @@ int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
 	if (!service_str)
 		return (-1);
 
-	service_str[0] = '\0';
-	probe = find_probe(port);
-	
-	if (!probe)
-	{
-		snprintf(service_str, SERVICE_LEN, "unknown");
-		return (0);
-	}
+	/* Resolve base service name from system /etc/services database */
+	resolve_service_name(port, service_str);
 
-	/* Send probe and get response */
-	n = send_service_probe(addr, port, probe->probe_data, probe->probe_len, 
+	probe = find_probe(port);
+	if (!probe)
+		return (0);
+
+	/* Send probe and get response for banner/version detection */
+	n = send_service_probe(addr, port, probe->probe_data, probe->probe_len,
 			response, sizeof(response));
 	if (n <= 0)
-	{
-		snprintf(service_str, SERVICE_LEN, "%s", probe->name);
 		return (0);
-	}
 
 	/* Parse response based on service */
 	if (strcmp(probe->name, "ssh") == 0)
