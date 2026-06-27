@@ -28,7 +28,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		{"ports",		required_argument,	0, OPT_PORTS},
 		{"ip",			required_argument,	0, OPT_IP},
 		{"file",		required_argument,	0, OPT_FILE},
-		{"speedup",		optional_argument,	0, OPT_SPEEDUP},
+		{"speedup",		required_argument,	0, OPT_SPEEDUP},
 		{"scan",		required_argument,	0, OPT_SCAN},
 		{"os-detect",	no_argument,		0, OPT_OS},
 		{"service-detect",no_argument,		0, OPT_SERVICE},
@@ -39,14 +39,14 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
-	while ((opt = getopt_long(argc, argv, "hp:i:f:S::s:OV",
+	while ((opt = getopt_long(argc, argv, "hp:i:f:S:s:OV",
 				longopts, NULL)) != -1)
 	{
 		switch (opt)
 		{
 		case OPT_HELP:
 			print_help(argv[0]);
-			return (0);
+			return (1);
 		case OPT_PORTS:
 			if (set_ports(opts, optarg) < 0)
 				return (-1);
@@ -61,9 +61,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 				return (-1);
 			break ;
 		case OPT_SPEEDUP:
-			if (!optarg)
-				opts->speedup = MAX_SPEEDUP;
-			else if (set_speedup(opts, optarg) < 0)
+			if (set_speedup(opts, optarg) < 0)
 				return (-1);
 			break ;
 		case OPT_SCAN:

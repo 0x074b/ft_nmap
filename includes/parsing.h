@@ -61,5 +61,6 @@ int		set_scan(t_options *opts, const char *arg);
 
 int		resolve_host(const char *host, struct in_addr *out);
 int		add_host(t_options *opts, const char *host);
+void	free_options(t_options *opts);
 
 #endif

@@ -112,7 +112,7 @@ static int	type_for_sport(const t_worker *w, uint16_t dport)
 ** Demultiplex one captured TCP reply into the results table: saddr -> host,
 ** dest port -> scan type, source port -> target port, then that type's
 ** classifier turns the flags into a port state. PORT_UNKNOWN means "no
-** verdict" so the slot keeps the no_reply_state scan_run pre-filled.
+** verdict" so the slot keeps the no_reply_state worker_main pre-filled.
 */
 static void	handle_reply(const t_worker *w, size_t off,
 		const struct pcap_pkthdr *hdr, const u_char *data)
@@ -278,12 +278,11 @@ static void	scan_collect_replies(t_worker *w, size_t off)
 }
 
 /*
-** Send every probe this worker owns for one target port: for each selected
-** scan type, mark the slot with that type's no_reply_state and emit the probe
-** (from that type's source port) to every host. *sent tracks probes emitted
-** since the last flush; once it crosses PROBE_FLUSH_THRESHOLD the capture
-** buffer is drained mid-burst and the counter reset. The check lives in the
-** innermost loop so even a single port with a huge host list cannot outrun
+** Send every probe this worker owns for one (host, port) pair: for each
+** selected scan type, mark the slot with that type's no_reply_state and emit
+** the probe from that type's source port. *sent tracks probes emitted since the
+** last flush; once it crosses PROBE_FLUSH_THRESHOLD the capture buffer is
+** drained mid-burst and the counter reset, so a large work space cannot outrun
 ** the kernel buffer.
 */
 static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
@@ -316,26 +315,36 @@ static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 }
 
 /*
-** One worker's full pass. It owns every port p where (p - 1) % nthreads == id.
-** It fires probes across its whole stride, draining the capture buffer every
-** PROBE_FLUSH_THRESHOLD sends (handled inside send_port_probes) so no host-list
-** size can overflow the kernel buffer. A final collection window then catches
-** stragglers still in flight after the last batch.
+** Thread entry point for one worker's full pass (also called inline for
+** worker 0). Work is the flattened host * port space: unit u maps to host
+** u / nports and port active_ports[u % nports], and this worker owns every
+** unit u where u % nthreads == id. Striding the *combined* space (rather than
+** ports alone) keeps every worker busy even when there are many hosts but few
+** ports. The capture buffer is drained every PROBE_FLUSH_THRESHOLD sends
+** (inside send_host_port_probes) so the work space cannot overflow the kernel
+** buffer, and a final collection window catches stragglers still in flight.
+** Returns NULL to satisfy the pthread start-routine signature; run_scan
+** ignores it.
 */
-void	scan_run(t_worker *w)
+void	*worker_main(void *arg)
 {
-	size_t	off;
-	size_t	sent;
-	int		port;
+	t_worker	*w;
+	size_t		off;
+	size_t		sent;
+	size_t		total;
+	size_t		u;
 
+	w = (t_worker *)arg;
 	off = dl_header_size(pcap_datalink(w->p));
 	sent = 0;
-	port = w->id + 1;
-	while (port <= MAX_PORTS)
+	total = w->opts->ip_count * (size_t)w->nports;
+	u = (size_t)w->id;
+	while (u < total)
 	{
-		if (w->opts->ports[port])
-			send_port_probes(w, port, off, &sent);
-		port += w->nthreads;
+		send_host_port_probes(w, u / (size_t)w->nports,
+			w->active_ports[u % (size_t)w->nports], off, &sent);
+		u += (size_t)w->nthreads;
 	}
 	scan_collect_replies(w, off);
+	return (NULL);
 }
