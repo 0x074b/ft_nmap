@@ -75,13 +75,13 @@ int	main(int argc, char **argv)
 	double			elapsed_s;
 
 	if (parse_opts(argc, argv, &opts) < 0)
-		return (free_options(&opts), 1);
+		return (free(&opts), 1);
 	if (get_source_ip(&src) < 0)
-		return (free_options(&opts), 1);
+		return (free(&opts), 1);
 	srand((unsigned int)time(NULL));
 	sock = open_raw_socket();
 	if (sock < 0)
-		return (free_options(&opts), fprintf(stderr,
+		return (free(&opts), fprintf(stderr,
 				"Hint: raw sockets need CAP_NET_RAW (run as root)\n"), 1);
 	results = alloc_results(opts.ip_count);
 	if (!results)
@@ -95,14 +95,16 @@ int	main(int argc, char **argv)
 	
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
-		return (free_results(results, opts.ip_count),
-			free_options(&opts), close(sock), 1);
+		return (free_results(results, opts.ip_count), free(opts.ips), close(sock), 1);
 
 	/* Run OS detection analysis if enabled */
 	if (opts.os_detection)
 		os_detect_analyze(results, opts.ip_count);
 
-	/* Run service detection on open ports if enabled */
+	/* Always resolve service names from /etc/services (no network cost) */
+	service_resolve_names(&opts, results);
+
+	/* Run banner/version probing if requested (-sV) */
 	if (opts.service_detection)
 	{
 		printf("\nDetecting services...\n");
@@ -117,7 +119,8 @@ int	main(int argc, char **argv)
 		+ (double)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000000.0;
 	printf("Scan completed in %.2f seconds\n", elapsed_s);
 	free_results(results, opts.ip_count);
-	free_options(&opts);
+	free(opts.ips);
 	close(sock);
+
 	return (0);
 }

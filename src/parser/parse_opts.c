@@ -18,7 +18,7 @@ void	print_help(const char *prog)
 		MAX_SPEEDUP, MAX_SPEEDUP);
 	printf("  --scan TYPES      Scan types: SYN,ACK,FIN,NULL,XMAS,UDP\n");
 	printf("  -O, --os-detect   Enable OS detection via fingerprinting\n");
-	printf("  -sV, --service-detect Enable service and version detection\n");
+	printf("  -V, --service-detect Enable service and version detection\n");
 }
 
 int	parse_opts(int argc, char **argv, t_options *opts)

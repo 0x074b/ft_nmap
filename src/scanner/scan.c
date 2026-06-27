@@ -208,37 +208,72 @@ static int	drain_ready(t_worker *w, size_t off)
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
 	int					rc;
+	int					count;
 
+	count = 0;
 	while ((rc = pcap_next_ex(w->p, &hdr, &data)) > 0)
+	{
 		handle_reply(w, off, hdr, data);
-	return (rc);
+		count++;
+	}
+	if (rc < 0)
+		return (-1);
+	return (count);
 }
 
 /*
-** Final collection window draining this worker's pcap handle for 1000ms,
-** giving late (RTT-delayed) replies time to arrive. Rather than busy-spinning
-** the non-blocking handle, we sleep in poll() on its selectable fd and drain
-** only when data is ready — so under heavy contention (many workers, few cores)
-** a worker yields its core instead of burning the whole window descheduled,
-** which otherwise left replies unread in the ring at close. Falls back to a
-** plain spin if the handle exposes no selectable fd.
+** Final collection window: wait for stragglers after all probes have been
+** sent.
+**
+** Two-stage design:
+**   1. Before the first reply arrives (received_any == 0) the idle cutoff is
+**      suppressed entirely.  We just poll() in IDLE_CUTOFF_MS slices so the
+**      loop stays responsive without spinning.  This guarantees we always
+**      wait at least one full RTT even on fast (SYN-only) scans where all
+**      probes are sent before the first reply arrives.
+**   2. Once the first reply lands (received_any == 1) we start the idle timer.
+**      If no new packet arrives within IDLE_CUTOFF_MS we declare the burst
+**      finished and exit — this keeps local scans fast.
+**
+** HARD_DEADLINE_MS is a safety net: we never wait longer than this regardless
+** of reply activity (guards against a trickle of replies from a slow target).
+**
+** IDLE_CUTOFF_MS = 150ms instead of the old 50ms so that the burst window
+** outlasts the probe-send phase for high-numbered ports on ~67ms-RTT hosts
+** (last probe at ~290ms, reply at ~357ms — 50ms was too short).
 */
+# define HARD_DEADLINE_MS	1000
+# define IDLE_CUTOFF_MS		150
+
 static void	scan_collect_replies(t_worker *w, size_t off)
 {
 	struct pollfd	pfd;
 	uint64_t		deadline;
+	uint64_t		idle_since;
 	int				fd;
+	int				got;
+	int				received_any;
 
 	fd = pcap_get_selectable_fd(w->p);
 	pfd.fd = fd;
 	pfd.events = POLLIN;
-	deadline = now_ms() + 1000;
+	deadline = now_ms() + HARD_DEADLINE_MS;
+	idle_since = now_ms();
+	received_any = 0;
 	while (now_ms() < deadline)
 	{
-		if (fd >= 0 && poll(&pfd, 1, (int)(deadline - now_ms())) <= 0)
-			continue ;
-		if (drain_ready(w, off) < 0)
+		if (received_any && (now_ms() - idle_since >= IDLE_CUTOFF_MS))
 			break ;
+		if (fd >= 0 && poll(&pfd, 1, IDLE_CUTOFF_MS) <= 0)
+			continue ;
+		got = drain_ready(w, off);
+		if (got < 0)
+			break ;
+		if (got > 0)
+		{
+			idle_since = now_ms();
+			received_any = 1;
+		}
 	}
 }
 
@@ -250,10 +285,10 @@ static void	scan_collect_replies(t_worker *w, size_t off)
 ** drained mid-burst and the counter reset, so a large work space cannot outrun
 ** the kernel buffer.
 */
-static void	send_host_port_probes(t_worker *w, size_t h, int port,
-		size_t off, size_t *sent)
+static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 {
 	const t_scan_ops	*ops;
+	size_t				h;
 	int					t;
 
 	t = 0;
@@ -262,14 +297,17 @@ static void	send_host_port_probes(t_worker *w, size_t h, int port,
 		if (w->opts->scan[t])
 		{
 			ops = scan_ops(t);
-			w->results[h][port].state[t] = ops->no_reply_state;
-			if (ops->send(w->sock, w->src, w->sport[t],
-					w->opts->ips[h].addr, (uint16_t)port) < 0)
-				w->send_fail++;
-			if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
+			for (h = 0; h < w->opts->ip_count; h++)
 			{
-				scan_collect_replies(w, off);
-				*sent = 0;
+				w->results[h][port].state[t] = ops->no_reply_state;
+				if (ops->send(w->sock, w->src, w->sport[t],
+						w->opts->ips[h].addr, (uint16_t)port) < 0)
+					w->send_fail++;
+				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
+				{
+					drain_ready(w, off);
+					*sent = 0;
+				}
 			}
 		}
 		t++;
