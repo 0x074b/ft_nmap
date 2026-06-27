@@ -223,14 +223,27 @@ static int	drain_ready(t_worker *w, size_t off)
 
 /*
 ** Final collection window: wait for stragglers after all probes have been
-** sent.  We stop as soon as the capture fd has been idle for IDLE_CUTOFF_MS
-** consecutive milliseconds, or after HARD_DEADLINE_MS total — whichever
-** comes first.  For localhost every reply arrives within a microsecond, so
-** the idle cutoff fires almost immediately.  For remote targets the idle gap
-** catches the last reply and exits cleanly without burning the full deadline.
+** sent.
+**
+** Two-stage design:
+**   1. Before the first reply arrives (received_any == 0) the idle cutoff is
+**      suppressed entirely.  We just poll() in IDLE_CUTOFF_MS slices so the
+**      loop stays responsive without spinning.  This guarantees we always
+**      wait at least one full RTT even on fast (SYN-only) scans where all
+**      probes are sent before the first reply arrives.
+**   2. Once the first reply lands (received_any == 1) we start the idle timer.
+**      If no new packet arrives within IDLE_CUTOFF_MS we declare the burst
+**      finished and exit — this keeps local scans fast.
+**
+** HARD_DEADLINE_MS is a safety net: we never wait longer than this regardless
+** of reply activity (guards against a trickle of replies from a slow target).
+**
+** IDLE_CUTOFF_MS = 150ms instead of the old 50ms so that the burst window
+** outlasts the probe-send phase for high-numbered ports on ~67ms-RTT hosts
+** (last probe at ~290ms, reply at ~357ms — 50ms was too short).
 */
 # define HARD_DEADLINE_MS	1000
-# define IDLE_CUTOFF_MS		50
+# define IDLE_CUTOFF_MS		150
 
 static void	scan_collect_replies(t_worker *w, size_t off)
 {
@@ -239,15 +252,17 @@ static void	scan_collect_replies(t_worker *w, size_t off)
 	uint64_t		idle_since;
 	int				fd;
 	int				got;
+	int				received_any;
 
 	fd = pcap_get_selectable_fd(w->p);
 	pfd.fd = fd;
 	pfd.events = POLLIN;
 	deadline = now_ms() + HARD_DEADLINE_MS;
 	idle_since = now_ms();
+	received_any = 0;
 	while (now_ms() < deadline)
 	{
-		if (now_ms() - idle_since >= IDLE_CUTOFF_MS)
+		if (received_any && (now_ms() - idle_since >= IDLE_CUTOFF_MS))
 			break ;
 		if (fd >= 0 && poll(&pfd, 1, IDLE_CUTOFF_MS) <= 0)
 			continue ;
@@ -255,7 +270,10 @@ static void	scan_collect_replies(t_worker *w, size_t off)
 		if (got < 0)
 			break ;
 		if (got > 0)
+		{
 			idle_since = now_ms();
+			received_any = 1;
+		}
 	}
 }
 
