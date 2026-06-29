@@ -77,7 +77,6 @@ static t_port_state	aggregate_state(const t_options *opts,
 ** open, open|filtered, or unfiltered (ACK-only firewall probe).
 ** Filtered and closed ports are suppressed like nmap's default behaviour
 ** and counted separately in the "Not shown" summary line.
-/*
 ** True when ACK is the sole active scan type.  In that mode the roles of
 ** FILTERED and UNFILTERED are inverted relative to a SYN scan:
 **   UNFILTERED = baseline (RST received — no stateful firewall)  → hide
