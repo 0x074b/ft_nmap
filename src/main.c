@@ -75,13 +75,13 @@ int	main(int argc, char **argv)
 	double			elapsed_s;
 
 	if (parse_opts(argc, argv, &opts) < 0)
-		return (free(&opts), 1);
+		return (1);
 	if (get_source_ip(&src) < 0)
-		return (free(&opts), 1);
+		return (free_options(&opts), 1);
 	srand((unsigned int)time(NULL));
 	sock = open_raw_socket();
 	if (sock < 0)
-		return (free(&opts), fprintf(stderr,
+		return (free_options(&opts), fprintf(stderr,
 				"Hint: raw sockets need CAP_NET_RAW (run as root)\n"), 1);
 	results = alloc_results(opts.ip_count);
 	if (!results)
