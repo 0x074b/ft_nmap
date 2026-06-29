@@ -36,3 +36,4 @@
 45.79.14.38
 37.34.59.148
 localhost
+localhost

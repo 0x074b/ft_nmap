@@ -8,126 +8,36 @@
 #include <sys/select.h>
 #include <sys/time.h>
 #include <ctype.h>
+#include <netdb.h>
 
 #include "ft_nmap.h"
 
-#define SERVICE_PROBE_TIMEOUT 2
-#define SERVICE_BUFFER_SIZE 4096
+#define SERVICE_PROBE_TIMEOUT	2
+#define SERVICE_BUFFER_SIZE		4096
+
+static const char	g_http_probe[] =
+	"GET / HTTP/1.0\r\nHost: probe\r\nConnection: close\r\n\r\n";
 
 /*
-** Probe table: maps port -> probe data to send
+** RPC NULL call: record-mark framing + XID + CALL + rpcvers 2 +
+** prog 100000 (portmap) + vers 2 + proc 0 (NULL) + AUTH_NULL x2.
 */
-typedef struct s_probe
-{
-	uint16_t	port;
-	const char	*name;
-	const char	*probe_data;
-	size_t		probe_len;
-}	t_probe;
-
-/* Service probe database */
-static const t_probe	g_probes[] = {
-	{
-		21,
-		"ftp",
-		"USER nmap\r\n",
-		12
-	},
-	{
-		22,
-		"ssh",
-		"SSH-2.0-OpenSSH_Nmap_Probe\r\n",
-		28
-	},
-	{
-		25,
-		"smtp",
-		"EHLO nmap\r\n",
-		11
-	},
-	{
-		53,
-		"dns",
-		"\x00\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x03www\x06google\x03com\x00\x00\x01\x00\x01",
-		29
-	},
-	{
-		80,
-		"http",
-		"GET / HTTP/1.0\r\nHost: nmap\r\nConnection: close\r\n\r\n",
-		53
-	},
-	{
-		110,
-		"pop3",
-		"USER nmap\r\n",
-		11
-	},
-	{
-		143,
-		"imap",
-		"A1 CAPABILITY\r\n",
-		15
-	},
-	{
-		443,
-		"https",
-		"GET / HTTP/1.0\r\nHost: nmap\r\nConnection: close\r\n\r\n",
-		53
-	},
-	{
-		3306,
-		"mysql",
-		"",
-		0
-	},
-	{
-		5432,
-		"postgresql",
-		"",
-		0
-	},
-	{
-		0,
-		NULL,
-		NULL,
-		0
-	}
+static const char	g_rpc_probe[44] = {
+	'\x80', '\x00', '\x00', '\x28',
+	'\x72', '\xfe', '\x1d', '\x13',
+	'\x00', '\x00', '\x00', '\x00',
+	'\x00', '\x00', '\x00', '\x02',
+	'\x00', '\x01', '\x86', '\xa0',
+	'\x00', '\x00', '\x00', '\x02',
+	'\x00', '\x00', '\x00', '\x00',
+	'\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00',
+	'\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00', '\x00'
 };
 
-/*
-** Parse SSH banner to extract version
-** Format: SSH-2.0-OpenSSH_7.4p1 Debian-10+deb9u6
-*/
-static void	parse_ssh_banner(const char *banner, char *service_str)
-{
-	const char	*p;
-	char		buf[128];
-	size_t		len;
+/* ------------------------------------------------------------------ */
+/* String utilities                                                    */
+/* ------------------------------------------------------------------ */
 
-	if (!banner || !strstr(banner, "SSH"))
-		return ;
-
-	/* Find version part after "SSH-" */
-	p = strstr(banner, "SSH-");
-	if (p)
-	{
-		p += 4;  /* skip "SSH-" */
-		/* Copy until newline or null */
-		len = 0;
-		while (p[len] && p[len] != '\r' && p[len] != '\n' && len < 100)
-			len++;
-		if (len > 0)
-		{
-			snprintf(buf, sizeof(buf), "SSH: %.*s", (int)len, p);
-			strncpy(service_str, buf, SERVICE_LEN - 1);
-		}
-	}
-}
-
-/*
-** Case-insensitive string comparison (portable version)
-*/
 static int	str_ncasecmp(const char *s1, const char *s2, size_t n)
 {
 	unsigned char	c1;
@@ -137,13 +47,10 @@ static int	str_ncasecmp(const char *s1, const char *s2, size_t n)
 	{
 		c1 = (unsigned char)tolower(*s1);
 		c2 = (unsigned char)tolower(*s2);
-		
 		if (c1 != c2)
 			return ((int)c1 - (int)c2);
-		
 		if (*s1 == '\0')
 			return (0);
-		
 		s1++;
 		s2++;
 		n--;
@@ -151,9 +58,6 @@ static int	str_ncasecmp(const char *s1, const char *s2, size_t n)
 	return (0);
 }
 
-/*
-** Case-insensitive string search (portable version)
-*/
 static const char	*str_find_case(const char *haystack, const char *needle)
 {
 	size_t	len;
@@ -161,9 +65,7 @@ static const char	*str_find_case(const char *haystack, const char *needle)
 
 	if (!haystack || !needle)
 		return (NULL);
-	
 	len = strlen(needle);
-	
 	for (i = 0; haystack[i]; i++)
 	{
 		if (str_ncasecmp(&haystack[i], needle, len) == 0)
@@ -172,11 +74,31 @@ static const char	*str_find_case(const char *haystack, const char *needle)
 	return (NULL);
 }
 
-/*
-** Parse HTTP response to extract Server header
-** Looks for "Server: ..." line
-*/
-static void	parse_http_response(const char *response, char *service_str)
+/* ------------------------------------------------------------------ */
+/* Protocol-specific parsers (defined before use)                     */
+/* ------------------------------------------------------------------ */
+
+static void	parse_ssh_banner(const char *banner, char *service_str)
+{
+	const char	*p;
+	char		buf[128];
+	size_t		len;
+
+	p = strstr(banner, "SSH-");
+	if (!p)
+		return ;
+	p += 4;
+	len = 0;
+	while (p[len] && p[len] != '\r' && p[len] != '\n' && len < 100)
+		len++;
+	if (len > 0)
+	{
+		snprintf(buf, sizeof(buf), "SSH: %.*s", (int)len, p);
+		strncpy(service_str, buf, SERVICE_LEN - 1);
+	}
+}
+
+static void	parse_http_banner(const char *resp, char *service_str)
 {
 	const char	*p;
 	const char	*start;
@@ -184,81 +106,84 @@ static void	parse_http_response(const char *response, char *service_str)
 	size_t		len;
 	char		buf[256];
 
-	if (!response)
+	p = str_find_case(resp, "Server:");
+	if (!p)
 		return ;
-
-	/* Find "Server:" header (case-insensitive) */
-	p = str_find_case(response, "Server:");
-	if (p)
-	{
-		p += 7;  /* skip "Server:" */
-		
-		/* Skip whitespace */
-		while (*p && isspace(*p))
-			p++;
-		
-		start = p;
-		/* Find end of line */
-		end = start;
-		while (*end && *end != '\r' && *end != '\n')
-			end++;
-		
-		len = end - start;
-		if (len > 0 && len < 200)
-		{
-			snprintf(buf, sizeof(buf), "HTTP: %.*s", (int)len, start);
-			strncpy(service_str, buf, SERVICE_LEN - 1);
-		}
-	}
-}
-
-/*
-** Parse FTP banner to extract version
-** Format: 220 ProFTPD Server
-*/
-static void	parse_ftp_banner(const char *banner, char *service_str)
-{
-	const char	*p;
-	size_t		len;
-	char		buf[128];
-
-	if (!banner)
-		return ;
-
-	/* Find first space after code */
-	p = banner;
-	if (p[0] >= '0' && p[0] <= '9')
-	{
+	p += 7;
+	while (*p && isspace(*p))
 		p++;
-		if (p[0] >= '0' && p[0] <= '9')
-		{
-			p++;
-			if (p[0] >= '0' && p[0] <= '9')
-				p++;
-		}
-		
-		/* Skip space */
-		while (*p && isspace(*p))
-			p++;
-		
-		/* Copy rest of line */
-		len = 0;
-		while (p[len] && p[len] != '\r' && p[len] != '\n' && len < 100)
-			len++;
-		
-		if (len > 0)
-		{
-			snprintf(buf, sizeof(buf), "FTP: %.*s", (int)len, p);
-			strncpy(service_str, buf, SERVICE_LEN - 1);
-		}
+	start = p;
+	end = start;
+	while (*end && *end != '\r' && *end != '\n')
+		end++;
+	len = end - start;
+	if (len > 0 && len < 200)
+	{
+		snprintf(buf, sizeof(buf), "HTTP: %.*s", (int)len, start);
+		strncpy(service_str, buf, SERVICE_LEN - 1);
 	}
 }
 
 /*
-** Send probe and receive response with timeout
+** Extract the first printable line from a text greeting
+** (FTP 220, SMTP 220, POP3 +OK, IMAP * OK, …)
 */
+static void	parse_text_greeting(const char *r, char *service_str)
+{
+	size_t	len;
+
+	len = 0;
+	while (r[len] && r[len] != '\r' && r[len] != '\n'
+		&& len < (size_t)(SERVICE_LEN - 1))
+	{
+		if ((unsigned char)r[len] < 32 && r[len] != '\t')
+		{
+			len = 0;
+			break ;
+		}
+		len++;
+	}
+	if (len > 0)
+		snprintf(service_str, SERVICE_LEN, "%.*s", (int)len, r);
+}
+
+/* ------------------------------------------------------------------ */
+/* Generic dispatcher: identifies protocol from response content      */
+/* ------------------------------------------------------------------ */
+
+static void	parse_any_banner(const char *r, int n, char *service_str)
+{
+	(void)n;
+
+	if (!r || !r[0])
+		return ;
+	/* TLS/SSL handshake record — don't corrupt the service name */
+	if ((unsigned char)r[0] == 0x16 && (unsigned char)r[1] == 0x03)
+		return ;
+	/* Binary protocol (RPC, etc.): high-bit first byte */
+	if ((unsigned char)r[0] > 0x7f)
+		return ;
+	if (strncmp(r, "SSH-", 4) == 0)
+	{
+		parse_ssh_banner(r, service_str);
+		return ;
+	}
+	if (strncmp(r, "HTTP/", 5) == 0 || str_find_case(r, "Server:") != NULL)
+	{
+		parse_http_banner(r, service_str);
+		return ;
+	}
+	/* Generic text greeting */
+	parse_text_greeting(r, service_str);
+}
+
+/* ------------------------------------------------------------------ */
+/* TCP probe sender                                                    */
+/* ------------------------------------------------------------------ */
+
 static int	send_service_probe(struct in_addr addr, uint16_t port,
-		const char *probe_data, size_t probe_len, char *response, size_t resp_size)
+		const char *probe_data, size_t probe_len,
+		char *response, size_t resp_size)
 {
 	int					sock;
 	struct sockaddr_in	saddr;
@@ -270,21 +195,15 @@ static int	send_service_probe(struct in_addr addr, uint16_t port,
 	sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (sock < 0)
 		return (-1);
-
-	/* Non-blocking connect setup */
 	memset(&saddr, 0, sizeof(saddr));
 	saddr.sin_family = AF_INET;
 	saddr.sin_addr = addr;
 	saddr.sin_port = htons(port);
-
-	/* Try to connect */
 	if (connect(sock, (struct sockaddr *)&saddr, sizeof(saddr)) < 0)
 	{
 		close(sock);
 		return (-1);
 	}
-
-	/* Send probe if provided */
 	if (probe_data && probe_len > 0)
 	{
 		if (send(sock, probe_data, probe_len, 0) < 0)
@@ -293,115 +212,121 @@ static int	send_service_probe(struct in_addr addr, uint16_t port,
 			return (-1);
 		}
 	}
-
-	/* Receive response with timeout */
 	tv.tv_sec = SERVICE_PROBE_TIMEOUT;
 	tv.tv_usec = 0;
-	FD_ZERO(&rfds);
-	FD_SET(sock, &rfds);
-
 	total = 0;
 	while (1)
 	{
+		FD_ZERO(&rfds);
+		FD_SET(sock, &rfds);
 		if (select(sock + 1, &rfds, NULL, NULL, &tv) <= 0)
 			break ;
-		
 		n = recv(sock, response + total, resp_size - total - 1, 0);
 		if (n <= 0)
 			break ;
-		
-		total += n;
+		total += (size_t)n;
 		if (total >= resp_size - 1)
 			break ;
 	}
-
 	response[total] = '\0';
 	close(sock);
-	return (total);
+	return ((int)total);
 }
 
-/*
-** Find probe for a given port
-*/
-static const t_probe	*find_probe(uint16_t port)
+/* ------------------------------------------------------------------ */
+/* Service name lookup                                                 */
+/* ------------------------------------------------------------------ */
+
+static void	resolve_service_name(uint16_t port, char *service_str)
 {
-	int	i;
+	struct servent	*se;
 
-	i = 0;
-	while (g_probes[i].name != NULL)
-	{
-		if (g_probes[i].port == port)
-			return (&g_probes[i]);
-		i++;
-	}
-	return (NULL);
-}
-
-/*
-** Detect service on a specific port
-** Called for each open port
-*/
-int	service_detect_port(struct in_addr addr, uint16_t port, char *service_str)
-{
-	const t_probe	*probe;
-	char			response[SERVICE_BUFFER_SIZE];
-	int				n;
-
-	if (!service_str)
-		return (-1);
-
-	service_str[0] = '\0';
-	probe = find_probe(port);
-	
-	if (!probe)
-	{
-		snprintf(service_str, SERVICE_LEN, "unknown");
-		return (0);
-	}
-
-	/* Send probe and get response */
-	n = send_service_probe(addr, port, probe->probe_data, probe->probe_len, 
-			response, sizeof(response));
-	if (n <= 0)
-	{
-		snprintf(service_str, SERVICE_LEN, "%s", probe->name);
-		return (0);
-	}
-
-	/* Parse response based on service */
-	if (strcmp(probe->name, "ssh") == 0)
-		parse_ssh_banner(response, service_str);
-	else if (strcmp(probe->name, "http") == 0 || strcmp(probe->name, "https") == 0)
-		parse_http_response(response, service_str);
-	else if (strcmp(probe->name, "ftp") == 0)
-		parse_ftp_banner(response, service_str);
+	se = getservbyport(htons(port), NULL);
+	if (se && se->s_name)
+		snprintf(service_str, SERVICE_LEN, "%s", se->s_name);
 	else
-	{
-		/* Fallback: use first line of response */
-		size_t	len;
-		char	*nl;
-		
-		nl = strchr(response, '\n');
-		if (!nl)
-			nl = strchr(response, '\r');
-		
-		if (nl)
-			len = nl - response;
-		else
-			len = strlen(response);
-		
-		if (len > 0 && len < 100)
-			snprintf(service_str, SERVICE_LEN, "%.*s", (int)len, response);
-		else
-			snprintf(service_str, SERVICE_LEN, "%s", probe->name);
-	}
+		snprintf(service_str, SERVICE_LEN, "-");
+}
 
-	return (n);
+/* ------------------------------------------------------------------ */
+/* Public API                                                          */
+/* ------------------------------------------------------------------ */
+
+/*
+** Probe a single open port for version information.
+** Content-based two-probe strategy (no hardcoded port table):
+**   1. Banner grab (connect + wait)  — SSH, FTP, SMTP, POP3, IMAP …
+**   2. HTTP GET                      — web servers on any port
+**   3. RPC NULL call                 — port 111 specifically
+** Protocol is detected from response content, not the port number.
+*/
+int	service_detect_port(struct in_addr addr, uint16_t port, char *version_str)
+{
+	char	response[SERVICE_BUFFER_SIZE];
+	int		n;
+
+	if (!version_str)
+		return (-1);
+	version_str[0] = '\0';
+	n = send_service_probe(addr, port, NULL, 0, response, sizeof(response));
+	if (n > 0)
+	{
+		parse_any_banner(response, n, version_str);
+		return (n);
+	}
+	n = send_service_probe(addr, port,
+			g_http_probe, sizeof(g_http_probe) - 1,
+			response, sizeof(response));
+	if (n > 0)
+	{
+		parse_any_banner(response, n, version_str);
+		return (n);
+	}
+	if (port == 111)
+	{
+		n = send_service_probe(addr, port,
+				g_rpc_probe, sizeof(g_rpc_probe),
+				response, sizeof(response));
+		if (n > 0)
+			return (n);
+	}
+	return (0);
 }
 
 /*
-** Analyze services on all open ports
-** Called after scan completes
+** Resolve service names for all open ports via getservbyport.
+** No network — always called after every scan.
+*/
+void	service_resolve_names(const t_options *opts, t_scan_result **results)
+{
+	size_t	h;
+	int		port;
+	int		scan_type;
+
+	if (!opts || !results)
+		return ;
+	for (h = 0; h < opts->ip_count; h++)
+	{
+		for (port = 1; port <= MAX_PORTS; port++)
+		{
+			if (!results[h][port].port)
+				continue ;
+			for (scan_type = 0; scan_type < SCAN_MAX; scan_type++)
+			{
+				if (results[h][port].state[scan_type] == PORT_OPEN)
+				{
+					resolve_service_name((uint16_t)port,
+						results[h][port].service.name);
+					results[h][port].service.detected = true;
+					break ;
+				}
+			}
+		}
+	}
+}
+
+/*
+** Banner-probe all open ports.  Only called with -sV.
 */
 void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 {
@@ -411,15 +336,12 @@ void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 
 	if (!opts || !results)
 		return ;
-
 	for (h = 0; h < opts->ip_count; h++)
 	{
 		for (port = 1; port <= MAX_PORTS; port++)
 		{
 			if (!results[h][port].port)
 				continue ;
-			
-			/* Check all scan types for open ports */
 			for (scan_type = 0; scan_type < SCAN_MAX; scan_type++)
 			{
 				if (results[h][port].state[scan_type] == PORT_OPEN)
@@ -427,21 +349,19 @@ void	service_detect_analyze(const t_options *opts, t_scan_result **results)
 					printf("Detecting service on %s:%d... ",
 							opts->ips[h].input, port);
 					fflush(stdout);
-					
-					service_detect_port(opts->ips[h].addr, port,
-							results[h][port].service.name);
-					
-					if (results[h][port].service.name[0])
+					service_detect_port(opts->ips[h].addr, (uint16_t)port,
+							results[h][port].service.version);
+					if (results[h][port].service.version[0])
 					{
 						results[h][port].service.detected = true;
-						printf("%s\n", results[h][port].service.name);
+						printf("%s\n", results[h][port].service.version);
 					}
 					else
 						printf("(no response)\n");
-					
-					break ;  /* One detection per port */
+					break ;
 				}
 			}
 		}
 	}
 }
+

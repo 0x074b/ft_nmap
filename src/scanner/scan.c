@@ -210,6 +210,7 @@ static int	drain_ready(t_receiver *r, size_t off)
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
 	int					rc;
+	int					count;
 
 	while ((rc = pcap_next_ex(r->p, &hdr, &data)) > 0)
 		handle_reply(r, off, hdr, data);
@@ -232,6 +233,8 @@ void	*receiver_main(void *arg)
 	size_t			off;
 	uint64_t		grace_deadline;
 	int				fd;
+	int				got;
+	int				received_any;
 
 	r = (t_receiver *)arg;
 	off = dl_header_size(pcap_datalink(r->p));
