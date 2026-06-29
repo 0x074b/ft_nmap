@@ -94,14 +94,15 @@ static int	find_host_idx(const t_options *opts, uint32_t saddr)
 ** this is how we tell, e.g., a SYN-scan RST apart from an ACK-scan RST.
 ** Returns -1 for ports we did not send from.
 */
-static int	type_for_sport(const t_worker *w, uint16_t dport)
+static int	type_for_sport(const t_options *opts, const uint16_t *sports,
+		uint16_t dport)
 {
 	int	t;
 
 	t = 0;
 	while (t < SCAN_MAX)
 	{
-		if (w->opts->scan[t] && w->sport[t] == dport)
+		if (opts->scan[t] && sports[t] == dport)
 			return (t);
 		t++;
 	}
@@ -109,12 +110,13 @@ static int	type_for_sport(const t_worker *w, uint16_t dport)
 }
 
 /*
-** Demultiplex one captured TCP reply into the results table: saddr -> host,
+** Demultiplex one captured reply into the results table: saddr -> host,
 ** dest port -> scan type, source port -> target port, then that type's
 ** classifier turns the flags into a port state. PORT_UNKNOWN means "no
-** verdict" so the slot keeps the no_reply_state worker_main pre-filled.
+** verdict" so the slot keeps the no_reply_state prefill_results pre-filled.
+** Called only from the single receiver thread, so the writes need no lock.
 */
-static void	handle_reply(const t_worker *w, size_t off,
+static void	handle_reply(const t_receiver *r, size_t off,
 		const struct pcap_pkthdr *hdr, const u_char *data)
 {
 	const struct iphdr	*iph;
@@ -132,7 +134,7 @@ static void	handle_reply(const t_worker *w, size_t off,
 	if (hdr->caplen < off + sizeof(*iph))
 		return ;
 	iph = (const struct iphdr *)(data + off);
-	h = find_host_idx(w->opts, iph->saddr);
+	h = find_host_idx(r->opts, iph->saddr);
 	if (h < 0)
 		return ;
 	iph_len = iph->ihl * 4;
@@ -141,20 +143,20 @@ static void	handle_reply(const t_worker *w, size_t off,
 		if (hdr->caplen < off + iph_len + sizeof(*tcph))
 			return ;
 		tcph = (const struct tcphdr *)((const uint8_t *)iph + iph_len);
-		t = type_for_sport(w, ntohs(tcph->dest));
+		t = type_for_sport(r->opts, r->sports, ntohs(tcph->dest));
 		if (t < 0)
 			return ;
 		port = ntohs(tcph->source);
-		if (port > MAX_PORTS || !w->opts->ports[port])
+		if (port > MAX_PORTS || !r->opts->ports[port])
 			return ;
 		s = scan_ops(t)->classify(tcph);
 		if (s != PORT_UNKNOWN)
-			w->results[h][port].state[t] = s;
-		
+			r->results[h][port].state[t] = s;
+
 		/* OS Detection: Extract fingerprint from SYN-ACK or RST */
-		if (w->opts->os_detection && ((tcph->syn && tcph->ack) || tcph->rst))
+		if (r->opts->os_detection && ((tcph->syn && tcph->ack) || tcph->rst))
 			os_extract_fingerprint(h, (struct iphdr *)iph, (struct tcphdr *)tcph);
-		
+
 		return ;
 	}
 	if (iph->protocol == IPPROTO_UDP)
@@ -162,13 +164,13 @@ static void	handle_reply(const t_worker *w, size_t off,
 		if (hdr->caplen < off + iph_len + sizeof(*udph))
 			return ;
 		udph = (const struct udphdr *)((const uint8_t *)iph + iph_len);
-		t = type_for_sport(w, ntohs(udph->dest));
+		t = type_for_sport(r->opts, r->sports, ntohs(udph->dest));
 		if (t != SCAN_UDP)
 			return ;
 		port = ntohs(udph->source);
-		if (port > MAX_PORTS || !w->opts->ports[port])
+		if (port > MAX_PORTS || !r->opts->ports[port])
 			return ;
-		w->results[h][port].state[t] = PORT_OPEN;
+		r->results[h][port].state[t] = PORT_OPEN;
 		return ;
 	}
 	if (iph->protocol == IPPROTO_ICMP)
@@ -184,17 +186,17 @@ static void	handle_reply(const t_worker *w, size_t off,
 		if (inner_iph->protocol != IPPROTO_UDP)
 			return ;
 		inner_udph = (const struct udphdr *)((const uint8_t *)inner_iph + inner_iph->ihl * 4);
-		t = type_for_sport(w, ntohs(inner_udph->source));
+		t = type_for_sport(r->opts, r->sports, ntohs(inner_udph->source));
 		if (t != SCAN_UDP)
 			return ;
 		port = ntohs(inner_udph->dest);
-		if (port > MAX_PORTS || !w->opts->ports[port])
+		if (port > MAX_PORTS || !r->opts->ports[port])
 			return ;
 		if (icmph->code == ICMP_PORT_UNREACH)
 			s = PORT_CLOSED;
 		else
 			s = PORT_FILTERED;
-		w->results[h][port].state[t] = s;
+		r->results[h][port].state[t] = s;
 	}
 }
 
@@ -203,121 +205,101 @@ static void	handle_reply(const t_worker *w, size_t off,
 ** handle_reply. Returns the terminating pcap_next_ex code: 0 once the ring is
 ** empty, <0 on error.
 */
-static int	drain_ready(t_worker *w, size_t off)
+static int	drain_ready(t_receiver *r, size_t off)
 {
 	struct pcap_pkthdr	*hdr;
 	const u_char		*data;
 	int					rc;
 	int					count;
 
-	count = 0;
-	while ((rc = pcap_next_ex(w->p, &hdr, &data)) > 0)
-	{
-		handle_reply(w, off, hdr, data);
-		count++;
-	}
-	if (rc < 0)
-		return (-1);
-	return (count);
+	while ((rc = pcap_next_ex(r->p, &hdr, &data)) > 0)
+		handle_reply(r, off, hdr, data);
+	return (rc);
 }
 
 /*
-** Final collection window: wait for stragglers after all probes have been
-** sent.
-**
-** Two-stage design:
-**   1. Before the first reply arrives (received_any == 0) the idle cutoff is
-**      suppressed entirely.  We just poll() in IDLE_CUTOFF_MS slices so the
-**      loop stays responsive without spinning.  This guarantees we always
-**      wait at least one full RTT even on fast (SYN-only) scans where all
-**      probes are sent before the first reply arrives.
-**   2. Once the first reply lands (received_any == 1) we start the idle timer.
-**      If no new packet arrives within IDLE_CUTOFF_MS we declare the burst
-**      finished and exit — this keeps local scans fast.
-**
-** HARD_DEADLINE_MS is a safety net: we never wait longer than this regardless
-** of reply activity (guards against a trickle of replies from a slow target).
-**
-** IDLE_CUTOFF_MS = 150ms instead of the old 50ms so that the burst window
-** outlasts the probe-send phase for high-numbered ports on ~67ms-RTT hosts
-** (last probe at ~290ms, reply at ~357ms — 50ms was too short).
+** Receiver thread: the sole reader of the one shared capture handle and the
+** sole writer of results. It sleeps in poll() on the handle's selectable fd and
+** drains every ready reply, so a single core kept fed with packets never lets
+** the ring back up (the old per-worker rings starved and dropped). It runs
+** until the senders signal they are done, then keeps draining for
+** COLLECT_GRACE_MS more to catch RTT-delayed stragglers. Falls back to a plain
+** spin if the handle exposes no selectable fd.
 */
-# define HARD_DEADLINE_MS	1000
-# define IDLE_CUTOFF_MS		150
-
-static void	scan_collect_replies(t_worker *w, size_t off)
+void	*receiver_main(void *arg)
 {
+	t_receiver		*r;
 	struct pollfd	pfd;
-	uint64_t		deadline;
-	uint64_t		idle_since;
+	size_t			off;
+	uint64_t		grace_deadline;
 	int				fd;
 	int				got;
 	int				received_any;
 
-	fd = pcap_get_selectable_fd(w->p);
+	r = (t_receiver *)arg;
+	off = dl_header_size(pcap_datalink(r->p));
+	fd = pcap_get_selectable_fd(r->p);
 	pfd.fd = fd;
 	pfd.events = POLLIN;
-	deadline = now_ms() + HARD_DEADLINE_MS;
-	idle_since = now_ms();
-	received_any = 0;
-	while (now_ms() < deadline)
+	grace_deadline = 0;
+	while (1)
 	{
-		if (received_any && (now_ms() - idle_since >= IDLE_CUTOFF_MS))
+		if (fd >= 0)
+			poll(&pfd, 1, 100);
+		if (drain_ready(r, off) < 0)
 			break ;
-		if (fd >= 0 && poll(&pfd, 1, IDLE_CUTOFF_MS) <= 0)
-			continue ;
-		got = drain_ready(w, off);
-		if (got < 0)
-			break ;
-		if (got > 0)
+		if (*r->senders_done)
 		{
-			idle_since = now_ms();
-			received_any = 1;
+			if (grace_deadline == 0)
+				grace_deadline = now_ms() + COLLECT_GRACE_MS;
+			else if (now_ms() >= grace_deadline)
+				break ;
 		}
+	}
+	drain_ready(r, off);
+	return (NULL);
+}
+
+/*
+** Stamp every selected scan type's no_reply_state into each active (host, port)
+** slot. Done single-threaded before any sender starts, so once probes fly the
+** receiver is the only thread writing results — no lock needed. A slot the
+** receiver never updates keeps this default (the "no answer" verdict).
+*/
+void	prefill_results(const t_options *opts, t_scan_result **results,
+		const uint16_t *active_ports, int nports)
+{
+	size_t	h;
+	int		pi;
+	int		t;
+
+	h = 0;
+	while (h < opts->ip_count)
+	{
+		pi = 0;
+		while (pi < nports)
+		{
+			t = 0;
+			while (t < SCAN_MAX)
+			{
+				if (opts->scan[t])
+					results[h][active_ports[pi]].state[t]
+						= scan_ops(t)->no_reply_state;
+				t++;
+			}
+			pi++;
+		}
+		h++;
 	}
 }
 
 /*
-** Send every probe this worker owns for one (host, port) pair: for each
-** selected scan type, mark the slot with that type's no_reply_state and emit
-** the probe from that type's source port. *sent tracks probes emitted since the
-** last flush; once it crosses PROBE_FLUSH_THRESHOLD the capture buffer is
-** drained mid-burst and the counter reset, so a large work space cannot outrun
-** the kernel buffer.
+** Emit every probe this sender owns for one (host, port) pair: one probe per
+** selected scan type, each from that type's shared source port. Replies are
+** captured and recorded by the receiver thread, not here. *sent counts probes
+** for optional pacing.
 */
-// static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
-// {
-// 	const t_scan_ops	*ops;
-// 	size_t				h;
-// 	int					t;
-
-// 	t = 0;
-// 	while (t < SCAN_MAX)
-// 	{
-// 		if (w->opts->scan[t])
-// 		{
-// 			ops = scan_ops(t);
-// 			for (h = 0; h < w->opts->ip_count; h++)
-// 			{
-// 				w->results[h][port].state[t] = ops->no_reply_state;
-// 				if (ops->send(w->sock, w->src, w->sport[t],
-// 						w->opts->ips[h].addr, (uint16_t)port) < 0)
-// 					w->send_fail++;
-// 				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
-// 				{
-// 					drain_ready(w, off);
-// 					*sent = 0;
-// 				}
-// 			}
-// 		}
-// 		t++;
-// 	}
-// }
-
-static void	send_host_port_probes(t_worker *w,
-		size_t host,
-		int port,
-		size_t off,
+static void	send_host_port_probes(t_sender *s, size_t h, int port,
 		size_t *sent)
 {
 	const t_scan_ops	*ops;
@@ -326,57 +308,47 @@ static void	send_host_port_probes(t_worker *w,
 	t = 0;
 	while (t < SCAN_MAX)
 	{
-		if (w->opts->scan[t])
+		if (s->opts->scan[t])
 		{
 			ops = scan_ops(t);
-			w->results[host][port].state[t] = ops->no_reply_state;
-			if (ops->send(w->sock,
-					w->src,
-					w->sport[t],
-					w->opts->ips[host].addr,
-					(uint16_t)port) < 0)
-				w->send_fail++;
-			if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
-			{
-				drain_ready(w, off);
-				*sent = 0;
-			}
+			if (ops->send(s->sock, s->src, s->sports[t],
+					s->opts->ips[h].addr, (uint16_t)port) < 0)
+				s->send_fail++;
+#if PROBE_PACING_US > 0
+			if (++(*sent) % PROBE_PACING_BATCH == 0)
+				usleep(PROBE_PACING_US);
+#else
+			(void)sent;
+#endif
 		}
 		t++;
 	}
 }
 
 /*
-** Thread entry point for one worker's full pass (also called inline for
-** worker 0). Work is the flattened host * port space: unit u maps to host
-** u / nports and port active_ports[u % nports], and this worker owns every
-** unit u where u % nthreads == id. Striding the *combined* space (rather than
-** ports alone) keeps every worker busy even when there are many hosts but few
-** ports. The capture buffer is drained every PROBE_FLUSH_THRESHOLD sends
-** (inside send_host_port_probes) so the work space cannot overflow the kernel
-** buffer, and a final collection window catches stragglers still in flight.
-** Returns NULL to satisfy the pthread start-routine signature; run_scan
-** ignores it.
+** Sender thread entry point. Work is the flattened host * port space: unit u
+** maps to host u / nports and port active_ports[u % nports], and this sender
+** owns every unit u where u % nsenders == id. Striding the *combined* space
+** keeps every sender busy whether the scan is a few hosts on many ports or many
+** hosts on a few ports. Senders only transmit; the receiver thread drains the
+** shared handle. Returns NULL to satisfy the pthread start-routine signature.
 */
-void	*worker_main(void *arg)
+void	*sender_main(void *arg)
 {
-	t_worker	*w;
-	size_t		off;
+	t_sender	*s;
 	size_t		sent;
 	size_t		total;
 	size_t		u;
 
-	w = (t_worker *)arg;
-	off = dl_header_size(pcap_datalink(w->p));
+	s = (t_sender *)arg;
 	sent = 0;
-	total = w->opts->ip_count * (size_t)w->nports;
-	u = (size_t)w->id;
+	total = s->opts->ip_count * (size_t)s->nports;
+	u = (size_t)s->id;
 	while (u < total)
 	{
-		send_host_port_probes(w, u / (size_t)w->nports,
-			w->active_ports[u % (size_t)w->nports], off, &sent);
-		u += (size_t)w->nthreads;
+		send_host_port_probes(s, u / (size_t)s->nports,
+			s->active_ports[u % (size_t)s->nports], &sent);
+		u += (size_t)s->nsenders;
 	}
-	scan_collect_replies(w, off);
 	return (NULL);
 }

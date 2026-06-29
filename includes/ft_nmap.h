@@ -16,16 +16,20 @@
 # define MAX_DECOYS			16
 
 /*
-** Capture tuning. We only ever parse IP + TCP/UDP (and the ICMP-embedded
-** inner headers), so a 256-byte snaplen captures everything we read. A worker
-** flushes its capture buffer every PROBE_FLUSH_THRESHOLD sends; the kernel
-** buffer is sized for twice that many packets so a reply (or retransmit) burst
-** between flushes cannot overflow it. ~512 B/packet over-estimates the per-
-** frame ring slot at this snaplen, so the byte budget guarantees the count.
+** Capture tuning. We only ever parse IP + TCP/UDP (and the ICMP-embedded inner
+** headers), so a 256-byte snaplen captures everything we read. A single capture
+** handle is drained continuously by a dedicated receiver thread, so we give it
+** one large kernel ring (PCAP_BUFFER_SIZE) instead of many small per-worker
+** rings. After the senders finish, the receiver keeps draining for
+** COLLECT_GRACE_MS to catch RTT-delayed stragglers. Optional pacing: a sender
+** sleeps PROBE_PACING_US microseconds every PROBE_PACING_BATCH probes so the
+** aggregate send rate cannot outrun the receiver (0 us = pacing off).
 */
 # define PCAP_SNAPLEN			256
-# define PROBE_FLUSH_THRESHOLD	6
-# define PCAP_BUFFER_SIZE		1048576
+# define PCAP_BUFFER_SIZE		(64 * 1024 * 1024)
+# define COLLECT_GRACE_MS		1000
+# define PROBE_PACING_BATCH		512
+# define PROBE_PACING_US		0
 
 # define IFACE_LEN			64
 # define HOST_LEN			256
@@ -193,21 +197,34 @@ size_t	build_udp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 
 # include "parsing.h"
 
-	/* thread/ — declared after parsing.h because t_options lives there */
-typedef struct s_worker
+	/* thread/ — declared after parsing.h because t_options lives there.
+	** Sending and receiving are split: many sender threads emit probes for a
+	** stride of the host*port work space while a single receiver thread drains
+	** the one shared capture handle into results. The receiver is the sole
+	** writer of results during the scan, so there is no locking. sports holds
+	** one source port per scan type (shared by every sender and the receiver),
+	** which is how a captured reply's dst port identifies its scan type. */
+typedef struct s_sender
 {
 	int					id;
-	int					nthreads;
+	int					nsenders;
 	int					sock;
-	pcap_t				*p;
 	struct in_addr		src;
-	uint16_t			sport[SCAN_MAX];
 	const t_options		*opts;
+	const uint16_t		*sports;
 	const uint16_t		*active_ports;
 	int					nports;
-	t_scan_result		**results;
 	uint64_t			send_fail;
-}	t_worker;
+}	t_sender;
+
+typedef struct s_receiver
+{
+	pcap_t				*p;
+	const t_options		*opts;
+	const uint16_t		*sports;
+	t_scan_result		**results;
+	volatile int		*senders_done;
+}	t_receiver;
 
 /*
 ** Capture-side counters summed across every pcap handle (each scan pass and,
@@ -228,9 +245,15 @@ pcap_t	*pcap_open_for_scan(const char *iface, const uint16_t *sports,
 
 	/* scanner/ — generic, scan-type-driven; declared after parsing.h because
 	** t_options lives there. The concrete per-type probe builders and reply
-	** classifiers live behind scan_ops() in scanner_internal.h. worker_main is
-	** the per-worker pass and doubles as the pthread start routine. */
-void	*worker_main(void *arg);
+	** classifiers live behind scan_ops() in scanner_internal.h. sender_main
+	** emits probes for a stride of the host*port work space; receiver_main
+	** drains the shared handle into results; prefill_results stamps each slot's
+	** no_reply_state before the senders start (so the receiver stays the sole
+	** concurrent writer). Both *_main double as pthread start routines. */
+void	*sender_main(void *arg);
+void	*receiver_main(void *arg);
+void	prefill_results(const t_options *opts, t_scan_result **results,
+			const uint16_t *active_ports, int nports);
 
 int		run_scan(const t_options *opts, int sock, const char *iface,
 			struct in_addr src, t_scan_result **results, t_pcap_stats *stats);
