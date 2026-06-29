@@ -177,23 +177,40 @@ typedef struct s_config
 	int				verbose;
 }	t_config;
 
+# define MAX_DATA_LENGTH		1400
+# define MAX_PROBE_LEN			(20 + 20 + MAX_DATA_LENGTH)
+
+	/* Per-packet evasion config extracted from t_options and passed to
+	** packet builders. Avoids a circular dependency (t_options is in
+	** parsing.h, included below) while keeping builders self-contained. */
+typedef struct s_pkt_cfg
+{
+	uint8_t		ttl;			/* 0 = default 64 */
+	bool		random_window;	/* randomise TCP window */
+	bool		bad_checksum;	/* corrupt TCP checksum */
+	uint16_t	data_length;	/* extra random padding bytes */
+}	t_pkt_cfg;
+
 	/* network/ */
 int		get_source_ip(struct in_addr *src);
 
 	/* packet/ */
+uint16_t	ip_checksum(const void *data, size_t len);
 void	build_ip_hdr(struct iphdr *iph, struct in_addr src, struct in_addr dst,
-			uint8_t protocol, uint16_t payload_len);
+			uint8_t protocol, uint16_t payload_len, uint8_t ttl);
 void	build_tcp_hdr(struct tcphdr *tcph, struct in_addr src,
 			struct in_addr dst, uint16_t sport, uint16_t dport,
-			t_scan_type type);
+			t_scan_type type, const t_pkt_cfg *cfg);
 size_t	build_tcp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
-			uint16_t sport, uint16_t dport, t_scan_type type);
+			uint16_t sport, uint16_t dport, t_scan_type type,
+			const t_pkt_cfg *cfg);
 void	build_udp_hdr(struct udphdr *udph, struct in_addr src,
 		struct in_addr dst, uint16_t sport, uint16_t dport,
 		const uint8_t *payload, size_t payload_len);
 size_t	build_udp_packet(uint8_t *buf, struct in_addr src, struct in_addr dst,
 		uint16_t sport, uint16_t dport,
-		const uint8_t *payload, size_t payload_len);
+		const uint8_t *payload, size_t payload_len,
+		const t_pkt_cfg *cfg);
 
 # include "parsing.h"
 
@@ -209,6 +226,9 @@ typedef struct s_sender
 	int					id;
 	int					nsenders;
 	int					sock;
+	int					l2_sock;	/* AF_PACKET socket for --fake-mac, -1 if unused */
+	int					ifindex;	/* interface index for l2_sock */
+	uint8_t				gw_mac[6];	/* gateway MAC for l2_sock */
 	struct in_addr		src;
 	const t_options		*opts;
 	const uint16_t		*sports;
@@ -257,6 +277,12 @@ void	prefill_results(const t_options *opts, t_scan_result **results,
 
 int		run_scan(const t_options *opts, int sock, const char *iface,
 			struct in_addr src, t_scan_result **results, t_pcap_stats *stats);
+
+	/* network/fake_mac.c — AF_PACKET socket + gateway MAC resolution for
+	** --fake-mac. Opens an AF_PACKET socket, finds the default gateway for
+	** the given interface, and resolves its MAC address via ARP. */
+int		fake_mac_init(const char *iface, const t_options *opts,
+			int *l2_sock, uint8_t *gw_mac, int *ifindex);
 
 	/* OS detection - TCP/IP fingerprinting */
 void	os_detect_init(void);

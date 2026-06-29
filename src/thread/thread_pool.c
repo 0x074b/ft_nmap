@@ -166,15 +166,27 @@ int	run_scan(const t_options *opts, int sock, const char *iface,
 	int				i;
 	int				ncores;
 	int				filter_count;
+	int				l2_sock;
+	int				ifindex;
+	uint8_t			gw_mac[6];
 
 	n = opts->speedup + 1;
 	senders = calloc(n, sizeof(*senders));
 	tids = calloc(n, sizeof(*tids));
 	if (!senders || !tids)
 		return (free(senders), free(tids), -1);
+	/* Initialise fake-mac L2 socket if requested */
+	l2_sock = -1;
+	ifindex = 0;
+	memset(gw_mac, 0, sizeof(gw_mac));
+	if (opts->fake_mac_set)
+		fake_mac_init(iface, opts, &l2_sock, gw_mac, &ifindex);
 	assign_sports(sports, opts);
 	memset(&shared, 0, sizeof(shared));
 	shared.sock = sock;
+	shared.l2_sock = l2_sock;
+	shared.ifindex = ifindex;
+	memcpy(shared.gw_mac, gw_mac, sizeof(gw_mac));
 	shared.src = src;
 	shared.opts = opts;
 	shared.sports = sports;
@@ -185,7 +197,8 @@ int	run_scan(const t_options *opts, int sock, const char *iface,
 	rctx.p = pcap_open_for_scan(iface, filter_sports, filter_count,
 			opts->scan[SCAN_UDP] ? 1 : 0);
 	if (!rctx.p)
-		return (free(senders), free(tids), -1);
+		return (free(senders), free(tids),
+			(l2_sock >= 0 ? close(l2_sock) : 0), -1);
 	senders_done = 0;
 	rctx.opts = opts;
 	rctx.sports = sports;
@@ -204,5 +217,7 @@ int	run_scan(const t_options *opts, int sock, const char *iface,
 		stats->send_fail += senders[i].send_fail;
 	accumulate_pcap_stats(rctx.p, stats);
 	pcap_close(rctx.p);
+	if (l2_sock >= 0)
+		close(l2_sock);
 	return (free(senders), free(tids), 0);
 }
