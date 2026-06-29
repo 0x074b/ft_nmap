@@ -285,10 +285,42 @@ static void	scan_collect_replies(t_worker *w, size_t off)
 ** drained mid-burst and the counter reset, so a large work space cannot outrun
 ** the kernel buffer.
 */
-static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
+// static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
+// {
+// 	const t_scan_ops	*ops;
+// 	size_t				h;
+// 	int					t;
+
+// 	t = 0;
+// 	while (t < SCAN_MAX)
+// 	{
+// 		if (w->opts->scan[t])
+// 		{
+// 			ops = scan_ops(t);
+// 			for (h = 0; h < w->opts->ip_count; h++)
+// 			{
+// 				w->results[h][port].state[t] = ops->no_reply_state;
+// 				if (ops->send(w->sock, w->src, w->sport[t],
+// 						w->opts->ips[h].addr, (uint16_t)port) < 0)
+// 					w->send_fail++;
+// 				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
+// 				{
+// 					drain_ready(w, off);
+// 					*sent = 0;
+// 				}
+// 			}
+// 		}
+// 		t++;
+// 	}
+// }
+
+static void	send_host_port_probes(t_worker *w,
+		size_t host,
+		int port,
+		size_t off,
+		size_t *sent)
 {
 	const t_scan_ops	*ops;
-	size_t				h;
 	int					t;
 
 	t = 0;
@@ -297,17 +329,17 @@ static void	send_port_probes(t_worker *w, int port, size_t off, size_t *sent)
 		if (w->opts->scan[t])
 		{
 			ops = scan_ops(t);
-			for (h = 0; h < w->opts->ip_count; h++)
+			w->results[host][port].state[t] = ops->no_reply_state;
+			if (ops->send(w->sock,
+					w->src,
+					w->sport[t],
+					w->opts->ips[host].addr,
+					(uint16_t)port) < 0)
+				w->send_fail++;
+			if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
 			{
-				w->results[h][port].state[t] = ops->no_reply_state;
-				if (ops->send(w->sock, w->src, w->sport[t],
-						w->opts->ips[h].addr, (uint16_t)port) < 0)
-					w->send_fail++;
-				if (++(*sent) >= PROBE_FLUSH_THRESHOLD)
-				{
-					drain_ready(w, off);
-					*sent = 0;
-				}
+				drain_ready(w, off);
+				*sent = 0;
 			}
 		}
 		t++;
