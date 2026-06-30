@@ -1,5 +1,4 @@
 NAME		:= ft_nmap
-PARSING		:= parsing
 
 CC			:= gcc
 CFLAGS		:= -Wall -Wextra -Werror -g
@@ -29,18 +28,13 @@ SRCS		:= \
 	src/detection/os_detect.c \
 	src/detection/service_detect.c
 
-
 OBJS			:= $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-OBJS_PARSING	:= $(SRCS_PARSING:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
-DEPS			:= $(OBJS:.o=.d) $(OBJS_PARSING:.o=.d)
+DEPS			:= $(OBJS:.o=.d)
 
 all: $(NAME)
 
 $(NAME): $(OBJS)
 	$(CC) $(CFLAGS) $(OBJS) -o $@ $(LDLIBS)
-
-$(PARSING): $(OBJS_PARSING)
-	$(CC) $(CFLAGS) $(OBJS_PARSING) -o $@
 
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
@@ -50,7 +44,7 @@ clean:
 	rm -rf $(OBJ_DIR)
 
 fclean: clean
-	rm -f $(NAME) $(PARSING)
+	rm -f $(NAME)
 
 re: fclean all
 
