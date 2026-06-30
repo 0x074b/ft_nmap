@@ -28,6 +28,7 @@ void	print_help(const char *prog)
 	printf("  --bad-checksum        Corrupt TCP checksum (evade some IDS)\n");
 	printf("  --data-length N       Append N random bytes of payload\n");
 	printf("  --fake-mac XX:XX:...  Spoof source MAC (requires AF_PACKET)\n");
+	printf("  --iface NAME          Network interface to use (default: any)\n");
 }
 
 int	parse_opts(int argc, char **argv, t_options *opts)
@@ -49,6 +50,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		{"bad-checksum",	no_argument,		0, OPT_BAD_CKSUM},
 		{"data-length",		required_argument,	0, OPT_DATA_LENGTH},
 		{"fake-mac",		required_argument,	0, OPT_FAKE_MAC}, //
+		{"iface",			required_argument,	0, OPT_IFACE},
 		{0, 0, 0, 0},
 	};
 	int		opt;
@@ -56,6 +58,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
+	strncpy(opts->iface, "any", IFACE_LEN - 1);
 	while ((opt = getopt_long(argc, argv, "hp:i:f:D:S:s:OVL:",
 				longopts, NULL)) != -1)
 	{
@@ -119,6 +122,10 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 			break ;
 		case OPT_FAKE_MAC:
 			if (set_fake_mac(opts, optarg) < 0)
+				return (-1);
+			break ;
+		case OPT_IFACE:
+			if (set_iface(opts, optarg) < 0)
 				return (-1);
 			break ;
 		default:

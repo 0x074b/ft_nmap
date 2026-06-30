@@ -395,3 +395,13 @@ int	set_fake_mac(t_options *opts, const char *arg)
 	opts->fake_mac_set = true;
 	return (0);
 }
+
+int	set_iface(t_options *opts, const char *arg)
+{
+	if (strlen(arg) >= IFACE_LEN)
+		return (fprintf(stderr,
+				"Error: interface name too long: %s\n", arg), -1);
+	strncpy(opts->iface, arg, IFACE_LEN - 1);
+	opts->iface[IFACE_LEN - 1] = '\0';
+	return (0);
+}

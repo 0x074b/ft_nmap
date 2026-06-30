@@ -26,6 +26,7 @@ typedef enum e_opt_type
 	OPT_BAD_CKSUM	= 304,	/* --bad-checksum: corrupt checksum */
 	OPT_DATA_LENGTH	= 'L',	/* --data-length N: extra padding bytes */
 	OPT_FAKE_MAC	= 306,	/* --fake-mac XX:XX:XX:XX:XX:XX */
+	OPT_IFACE	= 307,	/* --iface NAME: network interface to use */
 }	t_opt_type;
 
 /*
@@ -67,6 +68,7 @@ typedef struct s_options
 	int			decoy_count;
 	uint8_t		fake_mac[6];	/* --fake-mac: source MAC override */
 	bool		fake_mac_set;
+	char		iface[IFACE_LEN];	/* --iface: network interface (default: any) */
 }	t_options;
 
 int		parse_opts(int argc, char **argv, t_options *opts);
@@ -82,6 +84,7 @@ int		set_scan_delay(t_options *opts, const char *arg);
 int		set_decoys(t_options *opts, const char *arg);
 int		set_data_length(t_options *opts, const char *arg);
 int		set_fake_mac(t_options *opts, const char *arg);
+int		set_iface(t_options *opts, const char *arg);
 
 int		resolve_host(const char *host, struct in_addr *out);
 int		add_host(t_options *opts, const char *host);
