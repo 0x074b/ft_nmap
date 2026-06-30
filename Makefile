@@ -12,6 +12,7 @@ OBJ_DIR		:= obj
 SRCS		:= \
 	src/main.c \
 	src/network/interface.c \
+	src/network/fake_mac.c \
 	src/packet/ip_header.c \
 	src/parser/parse_opts.c \
 	src/parser/utils.c \

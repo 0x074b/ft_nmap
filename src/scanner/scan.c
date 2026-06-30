@@ -1,10 +1,13 @@
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <poll.h>
 #include <sys/time.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <netinet/ip_icmp.h>
+#include <linux/if_packet.h>
 
 #include "scanner_internal.h"
 
@@ -30,16 +33,110 @@ const t_scan_ops	*scan_ops(t_scan_type type)
 	return (&g_scan_ops[type]);
 }
 
-int	scan_send_raw(int sock, const uint8_t *buf, size_t len,
+/*
+** Split an IP packet into 8-byte payload fragments and send each in order.
+** Fragment 1 carries the first 8 bytes of the transport header with MF=1;
+** fragment 2 carries the rest with offset=1 (8 bytes). Both recompute the
+** IP checksum over their own header. Returns -1 if either sendto fails.
+*/
+static int	send_fragmented(const t_sender *s, const uint8_t *buf, size_t len,
 		struct in_addr dst, uint16_t dport)
 {
+	const struct iphdr	*orig;
+	struct iphdr		*iph1;
+	struct iphdr		*iph2;
+	uint8_t				frag1[20 + 8];
+	uint8_t				frag2[MAX_PROBE_LEN];
 	struct sockaddr_in	to;
+	size_t				ip_hlen;
+	size_t				payload_len;
+	size_t				frag1_plen;
+	size_t				frag2_plen;
 
 	memset(&to, 0, sizeof(to));
 	to.sin_family = AF_INET;
 	to.sin_addr = dst;
 	to.sin_port = htons(dport);
-	if (sendto(sock, buf, len, 0, (struct sockaddr *)&to, sizeof(to)) < 0)
+	orig = (const struct iphdr *)buf;
+	ip_hlen = (size_t)orig->ihl * 4;
+	if (len <= ip_hlen)
+		return (sendto(s->sock, buf, len, 0,
+			(struct sockaddr *)&to, sizeof(to)) < 0 ? -1 : 0);
+	payload_len = len - ip_hlen;
+	frag1_plen = payload_len >= 8 ? 8 : payload_len;
+	frag2_plen = payload_len - frag1_plen;
+	/* Fragment 1: IP header + first frag1_plen bytes, MF=1, offset=0 */
+	memcpy(frag1, buf, ip_hlen + frag1_plen);
+	iph1 = (struct iphdr *)frag1;
+	iph1->tot_len = htons((uint16_t)(ip_hlen + frag1_plen));
+	iph1->frag_off = htons(IP_MF);
+	iph1->check = 0;
+	iph1->check = ip_checksum(iph1, ip_hlen);
+	if (sendto(s->sock, frag1, ip_hlen + frag1_plen, 0,
+		(struct sockaddr *)&to, sizeof(to)) < 0)
+		return (-1);
+	if (frag2_plen == 0)
+		return (0);
+	/* Fragment 2: IP header + remaining bytes, MF=0, offset=frag1_plen/8 */
+	memcpy(frag2, buf, ip_hlen);
+	memcpy(frag2 + ip_hlen, buf + ip_hlen + frag1_plen, frag2_plen);
+	iph2 = (struct iphdr *)frag2;
+	iph2->tot_len = htons((uint16_t)(ip_hlen + frag2_plen));
+	iph2->frag_off = htons((uint16_t)(frag1_plen / 8));
+	iph2->check = 0;
+	iph2->check = ip_checksum(iph2, ip_hlen);
+	if (sendto(s->sock, frag2, ip_hlen + frag2_plen, 0,
+		(struct sockaddr *)&to, sizeof(to)) < 0)
+		return (-1);
+	return (0);
+}
+
+/*
+** Send a packet via an AF_PACKET (L2) socket with the fake source MAC set
+** in the Ethernet header. Uses sendmsg + iovec to avoid an extra copy.
+*/
+static int	send_l2(const t_sender *s, const uint8_t *buf, size_t len)
+{
+	uint8_t				eth_hdr[14];
+	struct iovec		iov[2];
+	struct msghdr		msg;
+	struct sockaddr_ll	ll;
+
+	memcpy(eth_hdr, s->gw_mac, 6);
+	memcpy(eth_hdr + 6, s->opts->fake_mac, 6);
+	eth_hdr[12] = 0x08;
+	eth_hdr[13] = 0x00;
+	memset(&ll, 0, sizeof(ll));
+	ll.sll_family = AF_PACKET;
+	ll.sll_ifindex = s->ifindex;
+	ll.sll_halen = 6;
+	memcpy(ll.sll_addr, s->gw_mac, 6);
+	iov[0].iov_base = eth_hdr;
+	iov[0].iov_len = 14;
+	iov[1].iov_base = (void *)buf;
+	iov[1].iov_len = len;
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_name = &ll;
+	msg.msg_namelen = sizeof(ll);
+	msg.msg_iov = iov;
+	msg.msg_iovlen = 2;
+	return (sendmsg(s->l2_sock, &msg, 0) < 0 ? -1 : 0);
+}
+
+int	scan_send_raw(const t_sender *s, const uint8_t *buf, size_t len,
+		struct in_addr dst, uint16_t dport)
+{
+	struct sockaddr_in	to;
+
+	if (s->l2_sock >= 0)
+		return (send_l2(s, buf, len));
+	if (s->opts && s->opts->fragment)
+		return (send_fragmented(s, buf, len, dst, dport));
+	memset(&to, 0, sizeof(to));
+	to.sin_family = AF_INET;
+	to.sin_addr = dst;
+	to.sin_port = htons(dport);
+	if (sendto(s->sock, buf, len, 0, (struct sockaddr *)&to, sizeof(to)) < 0)
 		return (-1);
 	return (0);
 }
@@ -300,17 +397,33 @@ static void	send_host_port_probes(t_sender *s, size_t h, int port,
 		size_t *sent)
 {
 	const t_scan_ops	*ops;
+	t_sender			decoy_s;
+	struct in_addr		dst;
 	int					t;
+	int					d;
 
+	dst = s->opts->ips[h].addr;
 	t = 0;
 	while (t < SCAN_MAX)
 	{
 		if (s->opts->scan[t])
 		{
 			ops = scan_ops(t);
-			if (ops->send(s->sock, s->src, s->sports[t],
-					s->opts->ips[h].addr, (uint16_t)port) < 0)
+			/* Send from each decoy IP before the real probe */
+			d = 0;
+			while (d < s->opts->decoy_count)
+			{
+				decoy_s = *s;
+				decoy_s.src = s->opts->decoys[d].ip;
+				ops->send(&decoy_s, s->sports[t], dst, (uint16_t)port);
+				d++;
+			}
+			/* Send the real probe */
+			if (ops->send(s, s->sports[t], dst, (uint16_t)port) < 0)
 				s->send_fail++;
+			/* Optional delay between probes (--scan-delay) */
+			if (s->opts->scan_delay_ms > 0)
+				usleep(s->opts->scan_delay_ms * 1000);
 #if PROBE_PACING_US > 0
 			if (++(*sent) % PROBE_PACING_BATCH == 0)
 				usleep(PROBE_PACING_US);

@@ -287,3 +287,121 @@ int	set_scan(t_options *opts, const char *arg)
 	}
 	return (0);
 }
+
+int	set_ttl(t_options *opts, const char *arg)
+{
+	char	*end;
+	long	n;
+
+	errno = 0;
+	n = strtol(arg, &end, 10);
+	if (errno != 0 || end == arg || *end != '\0' || n < 1 || n > 255)
+		return (fprintf(stderr,
+				"Error: --ttl must be 1..255 (got '%s')\n", arg), -1);
+	opts->custom_ttl = (uint8_t)n;
+	return (0);
+}
+
+int	set_scan_delay(t_options *opts, const char *arg)
+{
+	char	*end;
+	long	n;
+
+	errno = 0;
+	n = strtol(arg, &end, 10);
+	if (errno != 0 || end == arg || *end != '\0' || n < 0 || n > 3600000)
+		return (fprintf(stderr,
+				"Error: --scan-delay must be 0..3600000 ms (got '%s')\n",
+				arg), -1);
+	opts->scan_delay_ms = (uint32_t)n;
+	return (0);
+}
+
+int	set_data_length(t_options *opts, const char *arg)
+{
+	char	*end;
+	long	n;
+
+	errno = 0;
+	n = strtol(arg, &end, 10);
+	if (errno != 0 || end == arg || *end != '\0'
+		|| n < 0 || n > MAX_DATA_LENGTH)
+		return (fprintf(stderr,
+				"Error: --data-length must be 0..%d (got '%s')\n",
+				MAX_DATA_LENGTH, arg), -1);
+	opts->data_length = (uint16_t)n;
+	return (0);
+}
+
+/*
+** Parse a comma-separated list of IPv4 addresses or FQDNs and add each as a
+** decoy. Decoy probes are sent from these source IPs before the real probe,
+** making it harder to identify the true scanner.
+*/
+int	set_decoys(t_options *opts, const char *arg)
+{
+	const char		*p;
+	const char		*comma;
+	char			buf[HOST_LEN];
+	size_t			len;
+	struct in_addr	addr;
+
+	p = arg;
+	while (*p)
+	{
+		comma = strchr(p, ',');
+		len = comma ? (size_t)(comma - p) : strlen(p);
+		if (len == 0 || len >= sizeof(buf))
+			return (fprintf(stderr,
+					"Error: invalid decoy in '%s'\n", arg), -1);
+		if (opts->decoy_count >= MAX_DECOYS)
+			return (fprintf(stderr,
+					"Error: too many decoys (max %d)\n", MAX_DECOYS), -1);
+		memcpy(buf, p, len);
+		buf[len] = '\0';
+		if (resolve_host(buf, &addr) < 0)
+			return (-1);
+		opts->decoys[opts->decoy_count++].ip = addr;
+		p += len;
+		if (*p == ',')
+			p++;
+	}
+	return (0);
+}
+
+/*
+** Parse XX:XX:XX:XX:XX:XX and store into opts->fake_mac. Enables AF_PACKET
+** sending so the Ethernet source address is spoofed on the wire.
+*/
+int	set_fake_mac(t_options *opts, const char *arg)
+{
+	unsigned int	b[6];
+	int				i;
+
+	if (sscanf(arg, "%x:%x:%x:%x:%x:%x",
+		&b[0], &b[1], &b[2], &b[3], &b[4], &b[5]) != 6)
+		return (fprintf(stderr,
+				"Error: --fake-mac must be XX:XX:XX:XX:XX:XX"
+				" (got '%s')\n", arg), -1);
+	i = 0;
+	while (i < 6)
+	{
+		if (b[i] > 0xff)
+			return (fprintf(stderr,
+					"Error: invalid MAC byte in '%s'\n", arg), -1);
+		opts->fake_mac[i] = (uint8_t)b[i];
+		i++;
+	}
+	opts->fake_mac_set = true;
+	return (0);
+}
+
+int	set_iface(t_options *opts, const char *arg)
+{
+	if (strlen(arg) >= IFACE_LEN)
+		return (fprintf(stderr,
+				"Error: interface name too long: %s\n", arg), -1);
+	strncpy(opts->iface, arg, IFACE_LEN - 1);
+	opts->iface[IFACE_LEN - 1] = '\0';
+	return (0);
+}

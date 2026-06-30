@@ -65,7 +65,6 @@ static void	free_results(t_scan_result **r, size_t ip_count)
 int	main(int argc, char **argv)
 {
 	t_options		opts;
-	const char		*iface = "any";
 	struct in_addr	src;
 	int				sock;
 	t_scan_result	**results;
@@ -76,6 +75,12 @@ int	main(int argc, char **argv)
 
 	if (parse_opts(argc, argv, &opts) < 0)
 		return (1);
+	if (opts.fake_mac_set && strcmp(opts.iface, "any") == 0)
+	{
+		fprintf(stderr, "Error: --fake-mac requires a specific interface"
+			" (use --iface)\n");
+		return (free_options(&opts), 1);
+	}
 	if (get_source_ip(&src) < 0)
 		return (free_options(&opts), 1);
 	srand((unsigned int)time(NULL));
@@ -87,14 +92,14 @@ int	main(int argc, char **argv)
 	if (!results)
 		return (free_options(&opts), close(sock), 1);
 	stats = (t_pcap_stats){0, 0, 0, 0};
-	printf("Scanning from %s (threads=%d)\n", iface, opts.speedup);
+	printf("Scanning from %s (threads=%d)\n", opts.iface, opts.speedup);
 	
 	/* Initialize OS detection if enabled */
 	if (opts.os_detection)
 		os_detect_init();
 	
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
-	if (run_scan(&opts, sock, iface, src, results, &stats) < 0)
+	if (run_scan(&opts, sock, opts.iface, src, results, &stats) < 0)
 		return (free_results(results, opts.ip_count), free(opts.ips), close(sock), 1);
 
 	/* Run OS detection analysis if enabled */

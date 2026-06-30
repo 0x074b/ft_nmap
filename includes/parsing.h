@@ -10,14 +10,23 @@
 
 typedef enum e_opt_type
 {
-	OPT_HELP	= 'h',
-	OPT_PORTS	= 'p',
-	OPT_IP		= 'i',
-	OPT_FILE	= 'f',
-	OPT_SPEEDUP	= 'S',
-	OPT_SCAN	= 's',
-	OPT_OS		= 'O',
-	OPT_SERVICE	= 'V',
+	OPT_HELP		= 'h',
+	OPT_PORTS		= 'p',
+	OPT_IP			= 'i',
+	OPT_FILE		= 300,	/* long-only, frees short -f for --fragment */
+	OPT_SPEEDUP		= 'S',
+	OPT_SCAN		= 's',
+	OPT_OS			= 'O',
+	OPT_SERVICE		= 'V',
+	OPT_FRAGMENT	= 'f',	/* -f: split probes into IP fragments */
+	OPT_DECOY		= 'D',	/* -D ip,ip,...: send from decoy IPs first */
+	OPT_SCAN_DELAY	= 301,	/* --scan-delay N: ms between probes */
+	OPT_TTL			= 302,	/* --ttl N: custom IP TTL */
+	OPT_WIN_RANDOM	= 303,	/* --window-random: random TCP window */
+	OPT_BAD_CKSUM	= 304,	/* --bad-checksum: corrupt checksum */
+	OPT_DATA_LENGTH	= 'L',	/* --data-length N: extra padding bytes */
+	OPT_FAKE_MAC	= 306,	/* --fake-mac XX:XX:XX:XX:XX:XX */
+	OPT_IFACE	= 307,	/* --iface NAME: network interface to use */
 }	t_opt_type;
 
 /*
@@ -40,14 +49,26 @@ typedef struct s_host
 */
 typedef struct s_options
 {
-	bool	ports[MAX_PORTS + 1];
-	t_host	*ips;
-	size_t	ip_count;
-	size_t	ip_cap;
-	int		speedup;
-	bool	scan[SCAN_MAX];
-	bool	os_detection;
-	bool	service_detection;
+	bool		ports[MAX_PORTS + 1];
+	t_host		*ips;
+	size_t		ip_count;
+	size_t		ip_cap;
+	int			speedup;
+	bool		scan[SCAN_MAX];
+	bool		os_detection;
+	bool		service_detection;
+	/* evasion flags */
+	bool		fragment;		/* -f: split probes into 8-byte IP fragments */
+	bool		random_window;	/* --window-random: randomise TCP window */
+	bool		bad_checksum;	/* --bad-checksum: corrupt TCP/UDP checksum */
+	uint8_t		custom_ttl;		/* --ttl N: IP TTL (0 = default 64) */
+	uint32_t	scan_delay_ms;	/* --scan-delay N: ms between probes */
+	uint16_t	data_length;	/* --data-length N: extra padding bytes */
+	t_decoy		decoys[MAX_DECOYS];	/* -D: list of decoy source IPs */
+	int			decoy_count;
+	uint8_t		fake_mac[6];	/* --fake-mac: source MAC override */
+	bool		fake_mac_set;
+	char		iface[IFACE_LEN];	/* --iface: network interface (default: any) */
 }	t_options;
 
 int		parse_opts(int argc, char **argv, t_options *opts);
@@ -58,6 +79,12 @@ int		set_ip(t_options *opts, const char *arg);
 int		set_file(t_options *opts, const char *arg);
 int		set_speedup(t_options *opts, const char *arg);
 int		set_scan(t_options *opts, const char *arg);
+int		set_ttl(t_options *opts, const char *arg);
+int		set_scan_delay(t_options *opts, const char *arg);
+int		set_decoys(t_options *opts, const char *arg);
+int		set_data_length(t_options *opts, const char *arg);
+int		set_fake_mac(t_options *opts, const char *arg);
+int		set_iface(t_options *opts, const char *arg);
 
 int		resolve_host(const char *host, struct in_addr *out);
 int		add_host(t_options *opts, const char *host);
