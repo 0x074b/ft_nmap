@@ -42,6 +42,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		{"os-detect",		no_argument,		0, OPT_OS},
 		{"service-detect",	no_argument,		0, OPT_SERVICE},
 		{"fragment",		no_argument,		0, OPT_FRAGMENT},
+		{"decoy",			required_argument,	0, OPT_DECOY},
 		{"scan-delay",		required_argument,	0, OPT_SCAN_DELAY},
 		{"ttl",				required_argument,	0, OPT_TTL},
 		{"window-random",	no_argument,		0, OPT_WIN_RANDOM},
@@ -55,7 +56,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
-	while ((opt = getopt_long(argc, argv, "hp:i:fDS::s:OV",
+	while ((opt = getopt_long(argc, argv, "hp:i:f:D:S:s:OV",
 				longopts, NULL)) != -1)
 	{
 		switch (opt)
