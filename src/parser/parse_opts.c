@@ -47,8 +47,8 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		{"ttl",				required_argument,	0, OPT_TTL},
 		{"window-random",	no_argument,		0, OPT_WIN_RANDOM},
 		{"bad-checksum",	no_argument,		0, OPT_BAD_CKSUM},
-		{"data-length",		required_argument,	0, OPT_DATA_LENGTH},
-		{"fake-mac",		required_argument,	0, OPT_FAKE_MAC},
+		{"data-length",		required_argument,	0, OPT_DATA_LENGTH}, //
+		{"fake-mac",		required_argument,	0, OPT_FAKE_MAC}, //
 		{0, 0, 0, 0},
 	};
 	int		opt;
@@ -56,7 +56,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
-	while ((opt = getopt_long(argc, argv, "hp:i:f:D:S:s:OV",
+	while ((opt = getopt_long(argc, argv, "hp:i:f:D:S:s:OVL",
 				longopts, NULL)) != -1)
 	{
 		switch (opt)

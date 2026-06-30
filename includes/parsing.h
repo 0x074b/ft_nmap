@@ -24,7 +24,7 @@ typedef enum e_opt_type
 	OPT_TTL			= 302,	/* --ttl N: custom IP TTL */
 	OPT_WIN_RANDOM	= 303,	/* --window-random: random TCP window */
 	OPT_BAD_CKSUM	= 304,	/* --bad-checksum: corrupt checksum */
-	OPT_DATA_LENGTH	= 305,	/* --data-length N: extra padding bytes */
+	OPT_DATA_LENGTH	= 'L',	/* --data-length N: extra padding bytes */
 	OPT_FAKE_MAC	= 306,	/* --fake-mac XX:XX:XX:XX:XX:XX */
 }	t_opt_type;
 
