@@ -123,11 +123,13 @@ int	fake_mac_init(const char *iface, const t_options *opts,
 			strerror(errno));
 		return (-1);
 	}
+	printf("DEBUG iface=%s ifindex=%d\n", iface, *ifindex);
 	*ifindex = (int)if_nametoindex(iface);
 	if (!*ifindex)
 	{
 		fprintf(stderr, "Warning: --fake-mac: if_nametoindex(%s) failed\n",
 			iface);
+		printf("DEBUG iface=%s ifindex=%d\n", iface, *ifindex);
 		close(*l2_sock);
 		*l2_sock = -1;
 		return (-1);

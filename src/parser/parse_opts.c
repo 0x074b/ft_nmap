@@ -47,7 +47,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 		{"ttl",				required_argument,	0, OPT_TTL},
 		{"window-random",	no_argument,		0, OPT_WIN_RANDOM},
 		{"bad-checksum",	no_argument,		0, OPT_BAD_CKSUM},
-		{"data-length",		required_argument,	0, OPT_DATA_LENGTH}, //
+		{"data-length",		required_argument,	0, OPT_DATA_LENGTH},
 		{"fake-mac",		required_argument,	0, OPT_FAKE_MAC}, //
 		{0, 0, 0, 0},
 	};
