@@ -29,10 +29,6 @@ SRCS		:= \
 	src/detection/os_detect.c \
 	src/detection/service_detect.c
 
-SRCS_PARSING	:= \
-	src/parser/test.c \
-	src/parser/parse_opts.c \
-	src/parser/utils.c
 
 OBJS			:= $(SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 OBJS_PARSING	:= $(SRCS_PARSING:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
