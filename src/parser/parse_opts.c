@@ -56,7 +56,7 @@ int	parse_opts(int argc, char **argv, t_options *opts)
 	bool	ports_provided = false;
 
 	memset(opts, 0, sizeof(*opts));
-	while ((opt = getopt_long(argc, argv, "hp:i:f:D:S:s:OVL",
+	while ((opt = getopt_long(argc, argv, "hp:i:f:D:S:s:OVL:",
 				longopts, NULL)) != -1)
 	{
 		switch (opt)
